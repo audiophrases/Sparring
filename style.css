@@ -1,0 +1,165 @@
+/* ============================================================
+   Sparring Coach — styles
+   The board sizing rule: --board is written by app.js and is
+   always an exact multiple of 8 px, so each square track is a
+   whole number of pixels and the browser never draws a seam or
+   an uneven column between squares.
+   ============================================================ */
+
+:root{
+  --ink:#141b24;
+  --panel:#1c2734;
+  --panel-2:#233141;
+  --line:#31404f;
+  --text:#dde5ed;
+  --dim:#8496a6;
+  --gold:#e3a72f;
+  --gold-dim:#8a6a24;
+  --teal:#4fb3a5;
+
+  /* classic green & cream board */
+  --sq-light:#ebecd0;
+  --sq-dark:#779556;
+  --hl:rgba(247,247,105,.52);      /* last move */
+  --hl-strong:rgba(247,247,105,.72); /* selected piece */
+
+  --board:480px;                   /* replaced at runtime; multiple of 8 */
+  --sq:calc(var(--board) / 8);
+
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--ink);color:var(--text);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+body{padding:14px 14px 40px;font-size:14px;line-height:1.45}
+.wrap{max-width:1080px;margin:0 auto}
+
+/* header */
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;
+  border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}
+h1{font-family:var(--serif);font-size:23px;font-weight:400;letter-spacing:.01em}
+h1 em{font-style:italic;color:var(--gold)}
+.tag{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+
+/* layout */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,368px);gap:18px;align-items:start}
+@media(max-width:860px){.cols{grid-template-columns:1fr}}
+/* .boardcol spans the grid track and is what app.js measures;
+   .stack is pinned to the board's own width so the eval bar,
+   ribbon and controls line up with the board edges exactly. */
+.boardcol{min-width:0}
+.stack{width:var(--board)}
+
+/* board */
+.boardwrap{position:relative;width:var(--board)}
+.board{width:var(--board);height:var(--board);
+  display:grid;
+  grid-template-columns:repeat(8,var(--sq));
+  grid-template-rows:repeat(8,var(--sq));
+  border-radius:2px;overflow:hidden;
+  box-shadow:0 0 0 1px var(--line),0 2px 14px rgba(0,0,0,.35);
+  touch-action:manipulation}
+.sq{position:relative;width:var(--sq);height:var(--sq);cursor:pointer;user-select:none}
+.sq.l{background:var(--sq-light)}
+.sq.d{background:var(--sq-dark)}
+
+/* pieces — SVG, so they stay sharp at any board size */
+.pc{position:absolute;inset:0;width:100%;height:100%;display:block;
+  pointer-events:none;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.28))}
+
+/* coordinates, in the opposite square colour like every major site */
+.sq .co{position:absolute;font-family:var(--mono);
+  font-size:calc(var(--sq) * .19);font-weight:700;pointer-events:none;line-height:1}
+.sq .co.f{right:calc(var(--sq) * .05);bottom:calc(var(--sq) * .03)}
+.sq .co.r{left:calc(var(--sq) * .05);top:calc(var(--sq) * .04)}
+.sq.l .co{color:var(--sq-dark)}
+.sq.d .co{color:var(--sq-light)}
+
+/* highlights sit under the piece: ::before, not ::after */
+.sq.last::before{content:"";position:absolute;inset:0;background:var(--hl)}
+.sq.sel::before{content:"";position:absolute;inset:0;background:var(--hl-strong)}
+.sq.chk::before{content:"";position:absolute;inset:0;
+  background:radial-gradient(circle,rgba(214,72,60,.9),rgba(214,72,60,0) 72%)}
+.dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:28%;height:28%;border-radius:50%;background:rgba(20,27,36,.22)}
+.ring{position:absolute;inset:0;border-radius:50%;
+  border:calc(var(--sq) * .085) solid rgba(20,27,36,.22)}
+
+/* ribbon — the signature element */
+.ribbon{margin-top:12px;background:var(--panel);border:1px solid var(--line);
+  border-left:3px solid var(--gold);border-radius:3px;padding:12px 14px;
+  transition:border-left-color .35s ease,background .35s ease}
+.ribbon.off{border-left-color:var(--line);background:var(--panel-2)}
+.ribbon .eco{font-size:10.5px;letter-spacing:.16em;color:var(--gold);text-transform:uppercase}
+.ribbon.off .eco{color:var(--dim)}
+.ribbon .name{font-family:var(--serif);font-size:19.5px;line-height:1.25;margin-top:3px}
+.ribbon .sub{font-size:11.5px;color:var(--dim);margin-top:6px}
+
+/* evaluation bar — length is the score, height is how many moves hold it.
+   The trough sits mid-tone so a thinned segment stays legible whether it is
+   the light one or the dark one. */
+.evalbar{position:relative;margin-top:10px;height:26px;background:#46545f;
+  border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.evalbar i{position:absolute;top:50%;height:100%;transform:translateY(-50%);
+  transition:width .45s ease,height .45s ease}
+.evalbar .w{left:0;background:#eef1f2}
+.evalbar .b{right:0;background:#1b242d}
+.evalbar .val{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  background:rgba(20,27,36,.86);color:var(--text);border-radius:2px;
+  padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap}
+.evalbar.think .val{color:var(--dim)}
+
+/* controls */
+.ctl{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+button,select{font-family:var(--mono);font-size:12.5px;color:var(--text);
+  background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  padding:7px 10px;cursor:pointer}
+button:hover,select:hover{background:var(--panel-2);border-color:var(--gold-dim)}
+button:focus-visible,select:focus-visible,.sq:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+button.on{border-color:var(--gold);color:var(--gold)}
+
+/* cards */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  padding:13px 14px;margin-bottom:12px}
+.card h2{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--dim);font-weight:400;margin-bottom:11px;display:flex;justify-content:space-between;gap:8px}
+.card h2 span{color:var(--gold);letter-spacing:.06em}
+
+/* candidate move rows */
+.mv{display:block;width:100%;text-align:left;background:none;border:0;border-radius:2px;
+  padding:6px 5px;margin:0 -5px;cursor:default}
+.mv+.mv{border-top:1px solid rgba(49,64,79,.6)}
+.mv .top{display:flex;align-items:baseline;gap:8px}
+.mv .san{font-size:14.5px;min-width:52px}
+.mv .pct{font-size:13px;color:var(--gold);min-width:44px;text-align:right}
+.mv .n{font-size:10.5px;color:var(--dim);margin-left:auto}
+.mv.played .san{color:var(--gold)}
+.bar{display:flex;height:5px;border-radius:2px;overflow:hidden;margin-top:5px;background:var(--panel-2)}
+.bar i{display:block;transition:width .4s ease}
+.bar .bw{background:#e6e9ea}.bar .bd{background:#6b7d8a}.bar .bb{background:#2b3742}
+.freq{height:2px;background:var(--gold);opacity:.55;margin-top:4px;transition:width .4s ease}
+.legend{font-size:10px;color:var(--dim);margin-top:10px;display:flex;gap:12px;flex-wrap:wrap}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:1px;margin-right:4px;vertical-align:-1px}
+
+/* moves list */
+.moves{font-size:13px;max-height:190px;overflow:auto;line-height:1.9}
+.moves .no{color:var(--dim);margin-right:5px}
+.moves b{font-weight:400;margin-right:11px}
+.moves .ob{color:var(--dim)}
+
+/* status */
+.note{font-size:12px;color:var(--dim);min-height:1.4em}
+#note{margin-top:11px}
+.note b{color:var(--text);font-weight:400}
+.note .hot{color:var(--gold)}
+.warn{border-left:2px solid var(--gold-dim);padding-left:9px;color:var(--dim);font-size:11.5px;margin-top:10px}
+
+/* promotion */
+.promo{position:absolute;inset:0;background:rgba(20,27,36,.86);display:none;
+  align-items:center;justify-content:center;gap:8px;z-index:5}
+.promo.show{display:flex}
+.promo button{padding:6px;background:var(--panel);line-height:0}
+.promo .pc{position:static;width:calc(var(--sq) * .82);height:calc(var(--sq) * .82)}
+
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}

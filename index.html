@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sparring Coach — play what humans actually play</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Sparring <em>Coach</em></h1>
+  <div class="tag">plays what humans actually play</div>
+</header>
+
+<div class="cols">
+  <div class="boardcol">
+    <div class="stack">
+      <div class="boardwrap">
+        <div class="board" id="board"></div>
+        <div class="promo" id="promo"></div>
+      </div>
+
+      <div class="evalbar" id="evalbar" title="Engine evaluation, from White's point of view">
+        <i class="w" id="evalw"></i>
+        <i class="b" id="evalb"></i>
+        <span class="val" id="evaltxt">0.0</span>
+      </div>
+
+      <div class="ribbon" id="ribbon">
+        <div class="eco" id="eco">Opening</div>
+        <div class="name" id="oname">Starting position</div>
+        <div class="sub" id="osub">Make a move to begin.</div>
+      </div>
+
+      <div class="ctl">
+        <select id="level" title="Opponent strength"></select>
+        <select id="side" title="Your colour">
+          <option value="w">You play White</option>
+          <option value="b">You play Black</option>
+        </select>
+        <button id="newg">New game</button>
+        <button id="undo">Take back</button>
+        <button id="flip">Flip</button>
+        <button id="sparr" class="on">Sparring: On</button>
+        <button id="peek" class="on">Show candidates</button>
+        <button id="pgn">Copy PGN</button>
+        <button id="retry">Retry database</button>
+        <button id="tok">Lichess token</button>
+      </div>
+
+      <div class="note" id="note"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Human choices here <span id="poptot"></span></h2>
+      <div id="cands" class="note">Waiting for the position…</div>
+      <div class="legend" id="legend" style="display:none">
+        <span><i style="background:#e6e9ea"></i>White wins</span>
+        <span><i style="background:#6b7d8a"></i>Draw</span>
+        <span><i style="background:#2b3742"></i>Black wins</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Game <span id="depth"></span></h2>
+      <div class="moves" id="moves"><span class="ob">No moves yet.</span></div>
+    </div>
+
+    <div class="card">
+      <h2>How this opponent thinks</h2>
+      <div class="note" id="expl"></div>
+      <div class="warn" id="offline" style="display:none"></div>
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>
