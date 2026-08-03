@@ -16,7 +16,7 @@
   <div class="tag">plays what humans actually play</div>
 </header>
 
-<div class="cols">
+<div class="cols" id="cols">
   <div class="boardcol">
     <div class="stack">
       <div class="boardwrap">
@@ -46,7 +46,7 @@
         <button type="button" id="undo">Take back</button>
         <button type="button" id="flip">Flip</button>
         <button type="button" id="coach" class="on" title="C — when off, you move both sides">Coach: On</button>
-        <button type="button" id="peek" class="on">Show candidates</button>
+        <button type="button" id="peek" title="Collapse the whole right-hand panel">Hide panel</button>
         <button type="button" id="pgn">Copy PGN</button>
         <button type="button" id="retry">Retry database</button>
         <button type="button" id="tok">Lichess token</button>
@@ -64,7 +64,7 @@
     </div>
   </div>
 
-  <div>
+  <div class="sidepanel" id="sidepanel">
     <div class="card">
       <h2>
         <span class="ttl">Human choices here</span>

@@ -184,7 +184,7 @@ let userColor = "w";
 let level = "club";
 let book = null;          // explorer payload for the current position
 let lastName = null, lastEco = null, bookPlies = 0, outOfBook = false;
-let sel = null, legalTargets = [], lastMove = null, busy = false, peek = true;
+let sel = null, legalTargets = [], lastMove = null, busy = false, panelOpen = true;
 let coachMode = true;  // false = free play, you move both sides
 let pending = null;       // promotion pending {from,to,color}
 let pools = [];           // selected Lichess rating buckets
@@ -514,7 +514,7 @@ function renderCands(){
   /* the game count stays on the header even when the rows are hidden — it is
      what tells you the pool has run thin, and it gives nothing away */
   $("poptot").textContent = has ? fmt(tot) + " games" : "";
-  if (!peek){ lg.hidden = true; return; }
+  if (!panelOpen){ lg.hidden = true; return; }
   if (busy && !book){ el.textContent = "Reading the database…"; lg.hidden = true; return; }
   if (!has){
     el.innerHTML = '<span class="ob">' + (apiDown ? "Database unavailable."
@@ -852,19 +852,20 @@ $("side").onchange = () => { userColor = $("side").value; orientation = userColo
 $("newg").onclick = newGame;
 $("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; draw(); };
 
-/* the candidates panel: one state, two controls — the toolbar button and the
-   collapse toggle on the panel itself */
-function setPeek(v){
-  peek = v;
-  $("peek").classList.toggle("on", peek);
-  $("peek").textContent = peek ? "Show candidates" : "Candidates hidden";
-  $("candtoggle").textContent = peek ? "Hide" : "Show";
-  $("candtoggle").setAttribute("aria-expanded", String(peek));
-  $("cands").hidden = !peek;
-  renderCands();
+/* The right-hand panel collapses whole — candidates, move list and all. Its
+   own Hide button goes with it, so the toolbar button is the way back, and
+   the board claims the freed width. */
+function setPanel(v){
+  panelOpen = v;
+  $("sidepanel").hidden = !panelOpen;
+  $("cols").classList.toggle("solo", !panelOpen);
+  $("peek").textContent = panelOpen ? "Hide panel" : "Show panel";
+  $("candtoggle").setAttribute("aria-expanded", String(panelOpen));
+  sizeBoard();
+  if (panelOpen) renderCands();
 }
-$("peek").onclick = () => setPeek(!peek);
-$("candtoggle").onclick = () => setPeek(!peek);
+$("peek").onclick = () => setPanel(!panelOpen);
+$("candtoggle").onclick = () => setPanel(false);
 
 function setCoach(v){
   coachMode = v;
@@ -949,6 +950,6 @@ function newGame(){
 $("expl").textContent = LEVELS[level].blurb;
 if (token) $("tok").textContent = "Token saved";
 pools = levelPools(); renderChips();
-setPeek(true);
+setPanel(true);
 draw();
 newGame();

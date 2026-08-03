@@ -34,6 +34,9 @@
 /* .legend and .warn carry their own display, so [hidden] has to outrank them */
 [hidden]{display:none!important}
 html,body{background:var(--ink);color:var(--text);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+/* reserve the scrollbar always, so collapsing the panel cannot change the
+   available width by a scrollbar and resize the board out from under you */
+html{scrollbar-gutter:stable}
 body{padding:14px 14px 40px;font-size:14px;line-height:1.45}
 .wrap{max-width:1080px;margin:0 auto}
 
@@ -47,6 +50,8 @@ h1 em{font-style:italic;color:var(--gold)}
 /* layout */
 .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,368px);gap:18px;align-items:start}
 @media(max-width:860px){.cols{grid-template-columns:1fr}}
+/* panel collapsed: the board takes the whole width back */
+.cols.solo{grid-template-columns:minmax(0,1fr)}
 /* .boardcol spans the grid track and is what app.js measures;
    .stack is pinned to the board's own width so the eval bar,
    ribbon and controls line up with the board edges exactly. */
@@ -62,7 +67,8 @@ h1 em{font-style:italic;color:var(--gold)}
   border-radius:2px;overflow:hidden;
   box-shadow:0 0 0 1px var(--line),0 2px 14px rgba(0,0,0,.35);
   touch-action:manipulation}
-.sq{position:relative;width:var(--sq);height:var(--sq);cursor:pointer;user-select:none}
+.sq{position:relative;width:var(--sq);height:var(--sq);cursor:pointer;
+  -webkit-user-select:none;user-select:none}
 .sq.l{background:var(--sq-light)}
 .sq.d{background:var(--sq-dark)}
 
