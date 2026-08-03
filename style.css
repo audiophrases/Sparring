@@ -181,6 +181,33 @@ button.on{border-color:var(--gold);color:var(--gold)}
 .moves b.cur{color:var(--gold);background:rgba(227,167,47,.16);border-radius:2px;
   padding:0 4px;margin:0 3px 0 -4px}
 .moves .ob{color:var(--dim)}
+.moves b[data-ply]{cursor:help}
+
+/* move marks: only the notable ones are drawn, so a clean game stays clean */
+.moves b i{font-style:normal;font-size:11px;margin-left:1px;vertical-align:.08em}
+.r-brill i{color:var(--teal)}
+.r-great i{color:#7fb069}
+.r-inacc i{color:var(--gold)}
+.r-mist  i{color:#e0873f}
+.r-blun  i{color:#d6483c}
+
+/* the move tooltip */
+.tip{position:fixed;z-index:20;max-width:270px;pointer-events:none;
+  background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--gold);
+  border-radius:3px;padding:9px 11px;font-size:11px;line-height:1.5;
+  box-shadow:0 6px 20px rgba(0,0,0,.45)}
+.t-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  border-bottom:1px solid var(--line);padding-bottom:5px;margin-bottom:6px}
+.t-san{font-size:13px;color:var(--text)}
+.t-rate{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.t-rate.r-brill{color:var(--teal)}
+.t-rate.r-great{color:#7fb069}
+.t-rate.r-inacc{color:var(--gold)}
+.t-rate.r-mist{color:#e0873f}
+.t-rate.r-blun{color:#d6483c}
+.t-row{display:flex;justify-content:space-between;gap:12px;color:var(--dim)}
+.t-row span:last-child{color:var(--text);white-space:nowrap}
+.t-note{margin-top:6px;padding-top:5px;border-top:1px solid var(--line);color:var(--dim)}
 
 /* status */
 .note{font-size:12px;color:var(--dim);min-height:1.4em}

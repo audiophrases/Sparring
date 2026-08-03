@@ -554,8 +554,15 @@ function addWidenHint(el, tot){
 function renderMoves(){
   const h = game.history();
   if (!h.length){ $("moves").innerHTML = '<span class="ob">No moves yet.</span>'; return; }
-  /* the ply under review is marked, so the arrow keys have somewhere to point */
-  const ply = i => '<b' + (reviewPly === i + 1 ? ' class="cur"' : '') + '>' + h[i] + '</b>';
+  /* the ply under review is marked, so the arrow keys have somewhere to point;
+     a rated ply also carries its mark and hangs the tooltip off data-ply */
+  const ply = i => {
+    const n = i + 1, r = rateMove(n);
+    const cls = ((reviewPly === n ? "cur " : "") + (r ? RATINGS[r.key].cls : "")).trim();
+    const g = r ? RATINGS[r.key].glyph : "";
+    return '<b data-ply="' + n + '"' + (cls ? ' class="' + cls + '"' : '') + '>'
+      + h[i] + (g ? '<i>' + g + '</i>' : '') + '</b>';
+  };
   /* the trailing spaces are load-bearing: they are the only places the list is
      allowed to wrap, since each move itself is nowrap. The number stays glued
      to White's move because there is no space between them. */
@@ -572,6 +579,85 @@ function renderMoves(){
 }
 const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1) + "M" : n >= 1000 ? (n/1000).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ---------------- the tooltip on a move ----------------
+   One floating panel reused for every move, so the list stays cheap to
+   rebuild. It shows the arithmetic behind the mark rather than only the
+   verdict, because the verdict is a two-ply opinion and the numbers let
+   you judge it yourself. */
+const tipEl = document.createElement("div");
+tipEl.className = "tip";
+tipEl.hidden = true;
+document.body.appendChild(tipEl);
+
+const evalText = e => Math.abs(e.white) >= 9000
+  ? (e.white > 0 ? "mate for White" : "mate for Black") : cpLabel(e.white);
+
+function tipHtml(n){
+  const h = game.history();
+  if (!h[n-1]) return "";
+  const r = rateMove(n);
+  const who = n % 2 ? "White" : "Black";
+  const head = '<div class="t-head"><span class="t-san">' + Math.ceil(n/2)
+    + (n % 2 ? "." : "…") + h[n-1] + '</span>';
+  if (!r) return head + '<span class="t-rate">Evaluating…</span></div>'
+    + '<div class="t-note">The engine is still looking at the position this move led to.</div>';
+
+  const rat = RATINGS[r.key];
+  const doomed = r.loss >= 9000;                 // walked into mate; pawns stop meaning anything
+  const rows = [];
+  rows.push(["Evaluation", evalText(r.a) + " → " + evalText(r.b)]);
+  if (r.key === "mate"){
+    rows.push(["Result", who + " mates"]);
+  } else if (r.key === "forced"){
+    rows.push(["Choice", "the only legal move"]);
+  } else {
+    rows.push(["Cost", doomed ? "allows mate"
+      : r.loss < 5 ? "nothing" : (r.loss/100).toFixed(2) + " pawns"]);
+    rows.push(["Replies that hold", (r.b.capped ? RES_FULL + "+" : r.res.toFixed(1)) + " of " + RES_FULL]);
+    rows.push(["Legal replies", String(r.b.legal)]);
+  }
+  let note = "";
+  if (r.key === "mate") note = "";
+  else if (r.key === "forced") note = "Nothing to judge — there was no alternative.";
+  else if (doomed) note = "Walks into a forced mate.";
+  else if (r.routine) note = "A recapture the position asks for, so it is not marked as clever.";
+  else if (r.gave) note = "A won position handed back to roughly level.";
+  else if (r.key === "brilliant" || r.key === "great")
+    note = "Costs next to nothing and leaves the opponent barely a move that holds.";
+  else if (r.trick >= 20 && r.loss >= RATE.inaccuracy)
+    note = "Marked down less than the raw cost: it keeps the opponent on a tightrope.";
+  else if (r.key === "good") note = "Keeps the balance without forcing the issue.";
+
+  return head + '<span class="t-rate ' + rat.cls + '">' + rat.label + '</span></div>'
+    + rows.map(x => '<div class="t-row"><span>' + x[0] + '</span><span>' + x[1] + '</span></div>').join("")
+    + (note ? '<div class="t-note">' + note + '</div>' : "");
+}
+function placeTip(el){
+  const r = el.getBoundingClientRect(), t = tipEl.getBoundingClientRect();
+  let x = Math.min(r.left, window.innerWidth - t.width - 8);
+  let y = r.top - t.height - 8;
+  if (y < 8) y = r.bottom + 8;                 // no room above, drop below
+  tipEl.style.left = Math.max(8, x) + "px";
+  tipEl.style.top = y + "px";
+}
+function showTip(el){
+  const html = tipHtml(+el.dataset.ply);
+  if (!html) return;
+  tipEl.innerHTML = html;
+  tipEl.hidden = false;
+  placeTip(el);                                 // measured only once it is laid out
+}
+const hideTip = () => { tipEl.hidden = true; };
+$("moves").addEventListener("mouseover", e => {
+  const b = e.target.closest("b[data-ply]");
+  if (b) showTip(b);
+});
+$("moves").addEventListener("mouseout", e => {
+  if (e.target.closest("b[data-ply]")) hideTip();
+});
+$("moves").addEventListener("scroll", hideTip);
+window.addEventListener("blur", hideTip);
 
 /* ============================ fallback engine ============================ */
 const VAL = {p:100, n:320, b:330, r:500, q:900, k:20000};
@@ -671,6 +757,50 @@ const RES_FULL   = 4;      // this much resilience draws the bar at full height
 const RES_MIN    = 0.2;    // an only-move position still draws a visible sliver
 let evalToken = 0;         // cancels a search that a newer move has superseded
 
+/* ===================== move rating =====================
+   Two numbers decide a move's mark.
+
+   Loss, in centipawns. A negamax score is relative to the side to move, so
+   the value of the move actually played is the negation of the best score in
+   the position it led to: loss = bestBefore + bestAfter. Both come straight
+   from the full-window first pass of consecutive searches, which is the only
+   place accurate per-move numbers exist — the resilience pass clamps refuted
+   moves to `best` and runs a window too narrow to separate a mistake from a
+   blunder.
+
+   Trickiness, from the resilience the bar already draws: how many replies
+   hold the opponent's position. One means a tightrope. That earns a discount
+   off the loss, so a move that concedes a little but leaves the opponent one
+   path is not marked down like a plain error.
+
+   Everything you might want to retune lives in this block.                */
+const RATE = {
+  inaccuracy:  50,    // practical loss (cp) for ?!
+  mistake:    120,    // for ?
+  blunder:    250,    // for ??
+  brillLoss:   25,    // !! costs no more than this...
+  brillRes:  1.25,    // ...and leaves the opponent about one reply that holds
+  greatLoss:   45,
+  greatRes:   1.9,
+  trick:       60,    // cp forgiven when the opponent is left with nothing
+  lostAnyway:-200,    // below this the move is simply losing; no credit for their short list
+  minLegal:     4,    // fewer legal replies than this and they were forced, not outplayed
+  wonBefore:  150,    // a won position handed back...
+  wonAfter:    40     // ...down to about level is a blunder whatever the raw cp
+};
+const RATINGS = {
+  mate:       {glyph:"",   label:"Checkmate",  cls:"r-brill"},   // SAN already carries the #
+  forced:     {glyph:"",   label:"Forced",     cls:""},
+  brilliant:  {glyph:"!!", label:"Brilliant",  cls:"r-brill"},
+  great:      {glyph:"!",  label:"Great move", cls:"r-great"},
+  good:       {glyph:"",   label:"Good",       cls:""},
+  inaccuracy: {glyph:"?!", label:"Inaccuracy", cls:"r-inacc"},
+  mistake:    {glyph:"?",  label:"Mistake",    cls:"r-mist"},
+  blunder:    {glyph:"??", label:"Blunder",    cls:"r-blun"}
+};
+/* one entry per ply reached, index 0 being the starting position */
+let evalByPly = [];
+
 const noisier = (a, x) => ((x.captured ? VAL[x.captured] : 0) + (x.promotion ? 800 : 0))
                         - ((a.captured ? VAL[a.captured] : 0) + (a.promotion ? 800 : 0));
 
@@ -712,12 +842,23 @@ function cpLabel(cp){
 
 async function updateEval(){
   const mine = ++evalToken;
+  const ply = game.history().length;
   const g = new Chess(game.fen());
 
   if (g.game_over()){
     if (g.in_checkmate()) paintEval(g.turn() === "w" ? 0 : 100, g.turn() === "w" ? "0–1" : "1–0", null, 1);
     else paintEval(50, "½–½", null, 1);
     $("evalbar").title = "The game is over.";
+    /* a mated side is worth -99000 to itself; a draw is worth nothing to
+       either, which is what makes stalemating a won position score as the
+       blunder it is */
+    const mated = g.in_checkmate();
+    recordEval(ply, {
+      best: mated ? -99000 : 0,
+      white: mated ? (g.turn() === "w" ? -99000 : 99000) : 0,
+      res: RES_FULL, legal: 0, capped: false,
+      over: mated ? "checkmate" : "draw"
+    });
     return;
   }
 
@@ -781,6 +922,10 @@ async function updateEval(){
   const label = Math.abs(white) >= 9000 ? (white > 0 ? "#" : "-#") : cpLabel(white);
   const pct = Math.abs(white) >= 9000 ? (white > 0 ? 100 : 0) : cpToPct(white);
   paintEval(pct, label, thinSide, thick);
+  /* ms is sorted best-first by the resilience pass, so ms[0] is this side's
+     best reply — kept to spot a plain recapture when rating the move before */
+  recordEval(ply, {best, white, res: resilience, legal: ms.length, capped, over: null,
+                   bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || ""))});
 
   const mover = g.turn() === "w" ? "White" : "Black";
   $("evalbar").title = "Engine evaluation from White's point of view: " + label
@@ -834,6 +979,66 @@ function widenPool(){
 }
 function levelPools(){ return LEVELS[level].ratings.split(",").map(Number); }
 
+/* ===================== rating a played move =====================
+   Every position the game has reached leaves a record here, so a move is
+   rated from the pair that brackets it. The rating is only as sharp as the
+   two-ply search behind it: it knows a piece was dropped, it does not know
+   the sacrifice three moves from now was sound. */
+function recordEval(ply, data){
+  evalByPly[ply] = data;
+  renderMoves();
+}
+/* verbose history is rebuilt move by move inside chess.js, so it is cached
+   rather than asked for once per ply per render */
+let vhCache = {len:-1, list:[]};
+function verboseHistory(){
+  const len = game.history().length;
+  if (vhCache.len !== len) vhCache = {len, list: game.history({verbose:true})};
+  return vhCache.list;
+}
+
+function rateMove(n){                        // n = 1-based ply
+  const a = evalByPly[n-1], b = evalByPly[n];
+  if (!a || !b) return null;
+  if (b.over === "checkmate") return {key:"mate", loss:0, res:0, a, b};
+  /* With one legal move there was nothing to get wrong. Worth stating
+     explicitly: a mate coming into view across the move would otherwise
+     charge the whole swing to a player who had no choice. */
+  if (a.legal === 1) return {key:"forced", loss:0, res:Math.min(b.res, RES_FULL), a, b};
+
+  /* both scores are relative to whoever is on move in their own position, so
+     the played move is worth -b.best to the mover */
+  const loss = Math.max(0, a.best + b.best);
+  const res  = Math.min(b.res, RES_FULL);
+  /* The discount is for keeping the opponent on a tightrope. If the move left
+     you clearly worse, their shortage of replies is not your doing — they only
+     need the one that wins — so it earns nothing. */
+  const moverAfter = -b.best;
+  const tricky = moverAfter > RATE.lostAnyway;
+  const trick = tricky ? RATE.trick * Math.max(0, (RES_FULL - res) / RES_FULL) : 0;
+  const practical = loss - trick;
+  const gave = a.best >= RATE.wonBefore && -b.best <= RATE.wonAfter;
+
+  /* Two plies cannot tell a clever move from a capture that simply must be
+     answered. Inside an exchange the material has to come back, so exactly
+     one reply holds and every trade reads as a tightrope — whether the answer
+     retakes on the same square or grabs elsewhere in the sequence. A capture
+     answered by a capture is therefore bookkeeping, not brilliance. */
+  const mv = verboseHistory()[n-1];
+  const routine = !!(mv && /[ce]/.test(mv.flags || "") && b.bestCap);
+  const earned = b.legal >= RATE.minLegal && !routine;
+
+  let key;
+  if (gave && loss >= RATE.mistake)      key = "blunder";
+  else if (practical >= RATE.blunder)    key = "blunder";
+  else if (practical >= RATE.mistake)    key = "mistake";
+  else if (practical >= RATE.inaccuracy) key = "inaccuracy";
+  else if (earned && loss <= RATE.brillLoss && res < RATE.brillRes) key = "brilliant";
+  else if (earned && loss <= RATE.greatLoss && res < RATE.greatRes) key = "great";
+  else key = "good";
+  return {key, loss, res, practical, trick, gave, routine, a, b};
+}
+
 /* ============================ controls ============================ */
 const lv = $("level");
 Object.entries(LEVELS).forEach(([k,v]) => {
@@ -885,6 +1090,8 @@ $("undo").onclick = () => {
   if (busy) return;
   exitReview();
   game.undo(); if (coachMode && game.turn() !== userColor) game.undo();
+  evalByPly.length = game.history().length + 1;   // records past here describe moves that no longer exist
+  hideTip();
   const h = game.history({verbose:true});
   lastMove = h.length ? h[h.length-1] : null;
   sel = null; legalTargets = []; $("note").textContent = "";
@@ -940,7 +1147,8 @@ async function refreshPosition(){
 }
 function newGame(){
   game = new Chess();
-  exitReview(); savedNote = null;
+  exitReview(); savedNote = null; hideTip();
+  evalByPly = []; vhCache = {len:-1, list:[]};
   lastMove = null; sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
   $("note").textContent = ""; draw(); renderMoves(); renderRibbon(); updateEval();
