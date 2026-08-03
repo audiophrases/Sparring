@@ -1079,7 +1079,7 @@ Object.entries(LEVELS).forEach(([k,v]) => {
 lv.value = level;
 lv.onchange = () => {
   level = lv.value;
-  $("expl").textContent = LEVELS[level].blurb;
+  lv.title = LEVELS[level].blurb;
   pools = levelPools(); renderChips();
   refreshPosition();
 };
@@ -1194,7 +1194,7 @@ function newGame(){
   refreshPosition();
 }
 
-$("expl").textContent = LEVELS[level].blurb;
+lv.title = LEVELS[level].blurb;    // the description lives on the selector now
 if (token) $("tok").textContent = "Token saved";
 pools = levelPools(); renderChips();
 setPanel(true);
