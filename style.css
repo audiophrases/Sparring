@@ -31,6 +31,8 @@
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
+/* .legend and .warn carry their own display, so [hidden] has to outrank them */
+[hidden]{display:none!important}
 html,body{background:var(--ink);color:var(--text);font-family:var(--mono);-webkit-font-smoothing:antialiased}
 body{padding:14px 14px 40px;font-size:14px;line-height:1.45}
 .wrap{max-width:1080px;margin:0 auto}
@@ -118,13 +120,28 @@ button,select{font-family:var(--mono);font-size:12.5px;color:var(--text);
 button:hover,select:hover{background:var(--panel-2);border-color:var(--gold-dim)}
 button:focus-visible,select:focus-visible,.sq:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 button.on{border-color:var(--gold);color:var(--gold)}
+.hint{font-size:11px;color:var(--dim);align-self:center;margin-left:auto;white-space:nowrap}
+
+/* rating pools — widen the sample when a position runs thin */
+.pools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:8px}
+.plabel{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-right:3px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:11px;padding:4px 7px;color:var(--dim)}
+.chip.on{color:var(--gold);border-color:var(--gold)}
+.mini{font-size:11px;padding:4px 8px}
+.mini:disabled{opacity:.38;cursor:default}
+.mini:disabled:hover{background:var(--panel);border-color:var(--line)}
 
 /* cards */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:3px;
   padding:13px 14px;margin-bottom:12px}
 .card h2{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
-  color:var(--dim);font-weight:400;margin-bottom:11px;display:flex;justify-content:space-between;gap:8px}
-.card h2 span{color:var(--gold);letter-spacing:.06em}
+  color:var(--dim);font-weight:400;margin-bottom:11px;display:flex;
+  justify-content:space-between;align-items:center;gap:8px}
+.card h2 .amt{color:var(--gold);letter-spacing:.06em}
+.h2r{display:flex;align-items:center;gap:8px}
+.toggle{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  padding:3px 7px;color:var(--dim)}
 
 /* candidate move rows */
 .mv{display:block;width:100%;text-align:left;background:none;border:0;border-radius:2px;
@@ -141,11 +158,22 @@ button.on{border-color:var(--gold);color:var(--gold)}
 .freq{height:2px;background:var(--gold);opacity:.55;margin-top:4px;transition:width .4s ease}
 .legend{font-size:10px;color:var(--dim);margin-top:10px;display:flex;gap:12px;flex-wrap:wrap}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:1px;margin-right:4px;vertical-align:-1px}
+.sw-w{background:#e6e9ea}.sw-d{background:#6b7d8a}.sw-b{background:#2b3742}
+
+/* the nudge that appears when the selected pools barely cover a position */
+.thin{margin-top:10px;font-size:11px;color:var(--dim)}
+.link{background:none;border:0;padding:0;font-size:11px;color:var(--gold);
+  text-decoration:underline;cursor:pointer}
+.link:hover{background:none;border:0;color:var(--text)}
 
 /* moves list */
-.moves{font-size:13px;max-height:190px;overflow:auto;line-height:1.9}
+.moves{position:relative;font-size:13px;max-height:190px;
+  overflow-y:auto;overflow-x:hidden;line-height:1.9}
 .moves .no{color:var(--dim);margin-right:5px}
-.moves b{font-weight:400;margin-right:11px}
+/* nowrap keeps castling ("O-O") from breaking across lines at its hyphen */
+.moves b{font-weight:400;margin-right:7px;white-space:nowrap}
+.moves b.cur{color:var(--gold);background:rgba(227,167,47,.16);border-radius:2px;
+  padding:0 4px;margin:0 3px 0 -4px}
 .moves .ob{color:var(--dim)}
 
 /* status */

@@ -42,14 +42,22 @@
           <option value="w">You play White</option>
           <option value="b">You play Black</option>
         </select>
-        <button id="newg">New game</button>
-        <button id="undo">Take back</button>
-        <button id="flip">Flip</button>
-        <button id="sparr" class="on">Sparring: On</button>
-        <button id="peek" class="on">Show candidates</button>
-        <button id="pgn">Copy PGN</button>
-        <button id="retry">Retry database</button>
-        <button id="tok">Lichess token</button>
+        <button type="button" id="newg">New game</button>
+        <button type="button" id="undo">Take back</button>
+        <button type="button" id="flip">Flip</button>
+        <button type="button" id="coach" class="on" title="C — when off, you move both sides">Coach: On</button>
+        <button type="button" id="peek" class="on">Show candidates</button>
+        <button type="button" id="pgn">Copy PGN</button>
+        <button type="button" id="retry">Retry database</button>
+        <button type="button" id="tok">Lichess token</button>
+        <span class="hint" title="Arrow keys step through the game, Home and End jump to either end, C toggles the coach">← → review · C coach</span>
+      </div>
+
+      <div class="pools">
+        <span class="plabel" title="Which Lichess rating pools the database is read from">Pools</span>
+        <span class="chips" id="chips"></span>
+        <button type="button" class="mini" id="widen" title="Add the neighbouring rating pools — more games, looser play">Widen</button>
+        <button type="button" class="mini" id="poolreset" title="Back to this level's default pools">Reset</button>
       </div>
 
       <div class="note" id="note"></div>
@@ -58,24 +66,30 @@
 
   <div>
     <div class="card">
-      <h2>Human choices here <span id="poptot"></span></h2>
+      <h2>
+        <span class="ttl">Human choices here</span>
+        <span class="h2r">
+          <span class="amt" id="poptot"></span>
+          <button type="button" class="toggle" id="candtoggle" aria-controls="cands" aria-expanded="true">Hide</button>
+        </span>
+      </h2>
       <div id="cands" class="note">Waiting for the position…</div>
-      <div class="legend" id="legend" style="display:none">
-        <span><i style="background:#e6e9ea"></i>White wins</span>
-        <span><i style="background:#6b7d8a"></i>Draw</span>
-        <span><i style="background:#2b3742"></i>Black wins</span>
+      <div class="legend" id="legend" hidden>
+        <span><i class="sw-w"></i>White wins</span>
+        <span><i class="sw-d"></i>Draw</span>
+        <span><i class="sw-b"></i>Black wins</span>
       </div>
     </div>
 
     <div class="card">
-      <h2>Game <span id="depth"></span></h2>
+      <h2><span class="ttl">Game</span><span class="amt" id="depth"></span></h2>
       <div class="moves" id="moves"><span class="ob">No moves yet.</span></div>
     </div>
 
     <div class="card">
-      <h2>How this opponent thinks</h2>
+      <h2><span class="ttl">How this opponent thinks</span></h2>
       <div class="note" id="expl"></div>
-      <div class="warn" id="offline" style="display:none"></div>
+      <div class="warn" id="offline" hidden></div>
     </div>
   </div>
 </div>
