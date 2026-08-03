@@ -5,33 +5,16 @@
    ============================================================ */
 
 /* ============================ config ============================ */
-/* Lichess exposes fixed rating buckets: 1000 1200 1400 1600 1800 2000 2200 2500.
-   Each level maps to a run of them, and the runs overlap on purpose so the pool
-   of games stays wide and the jump in strength between levels stays gentle. */
-const LEVELS = {
-  beginner: {label:"Beginner · 600–1200", pool:"600–1200",
-             ratings:"1000,1200", speeds:"blitz,rapid,classical",
-             temp:1.9, minGames:1, depth:1, wild:0.22,
-             blurb:"Copies the beginner crowd (Lichess 1000–1200 pools): sound first moves, then the popular-but-loose tries. Sometimes plays a move almost nobody plays."},
-  club:     {label:"Club · 900–1600", pool:"900–1600",
-             ratings:"1000,1200,1400,1600", speeds:"blitz,rapid,classical",
-             temp:1.25, minGames:2, depth:2, wild:0.10,
-             blurb:"Samples the 1000–1600 pools in proportion to how often each move is really played. Mainstream, but not always the top choice."},
-  strong:   {label:"Strong · 1300–2200", pool:"1300–2200",
-             ratings:"1400,1600,1800,2000,2200", speeds:"blitz,rapid,classical",
-             temp:0.8, minGames:4, depth:3, wild:0.02,
-             blurb:"Leans hard toward the main line of the 1400–2200 pools, with occasional respectable sidelines."},
-  master:   {label:"Master · 2000+", pool:"2000+",
-             ratings:"2000,2200,2500", speeds:"blitz,rapid,classical",
-             temp:0.32, minGames:4, depth:3, wild:0,
-             blurb:"Near enough the main line every time: whatever the strongest pools Lichess exposes (2000–2500) play most in this exact position."}
-};
 const FILES = "abcdefgh";
 
-/* Every bucket Lichess exposes, low to high. A level seeds a selection out of
-   these; from there they are yours to widen — a rare position is thin in one
-   pool and perfectly well covered three pools down. */
+/* Every rating bucket Lichess exposes, low to high. These are the whole
+   difficulty control: the pools you pick are the crowd the coach copies, and
+   the coach plays whatever that crowd plays most in the position in front of
+   it. Widening the selection buys coverage in a rare line at the cost of a
+   looser opponent. */
 const BUCKETS = [1000,1200,1400,1600,1800,2000,2200,2500];
+const DEFAULT_POOLS = [1000,1200,1400,1600];
+const SPEEDS = "blitz,rapid,classical";
 const THIN = 300;          // total games below which the panel suggests widening
 
 /* ------------------------- piece set -------------------------
@@ -181,7 +164,7 @@ const LOCAL_ECO = {
 let game = new Chess();
 let orientation = "w";
 let userColor = "w";
-let level = "club";
+
 let book = null;          // explorer payload for the current position
 let lastName = null, lastEco = null, bookPlies = 0, outOfBook = false;
 let sel = null, legalTargets = [], busy = false, panelOpen = true;
@@ -362,7 +345,7 @@ function reportUserMove(m, prev){
   const tot = prev.moves.reduce((s,x) => s + gcount(x), 0);
   const hit = prev.moves.find(x => x.san === m.san);
   if (!hit){
-    $("note").innerHTML = '<b>' + m.san + '</b> — <span class="hot">not in the database</span> at this level. You just left book.';
+    $("note").innerHTML = '<b>' + m.san + '</b> — <span class="hot">not in the database</span> in these pools. You just left book.';
     return;
   }
   const pct = 100 * gcount(hit) / tot;
@@ -406,26 +389,29 @@ function finish(){
   $("note").innerHTML = "<b>" + msg + "</b> Start a new game whenever you like.";
 }
 
-/* pick the opponent's move: book first, engine after */
+/* Pick the opponent's move: the crowd's favourite while the book lasts, the
+   engine after. Straight argmax — the move the selected pools play most often
+   in this exact position, with no sampling and no deliberate sidelines. Which
+   move that is remains entirely a function of which pools are selected. */
 function chooseMove(data){
-  const cfg = LEVELS[level];
-  const pool = data && data.moves ? data.moves.filter(m => gcount(m) >= cfg.minGames) : [];
+  const pool = data && data.moves ? data.moves : [];
   if (pool.length){
     outOfBook = false;
-    if (Math.random() < cfg.wild){
-      const tail = pool.slice(Math.floor(pool.length/2));
-      const p = tail.length ? tail : pool;
-      return p[Math.floor(Math.random()*p.length)].san;
-    }
-    const max = Math.max(...pool.map(gcount));
-    const w = pool.map(m => Math.pow(gcount(m)/max, 1/cfg.temp));
-    const sum = w.reduce((a,b) => a+b, 0);
-    let x = Math.random() * sum;
-    for (let i = 0; i < pool.length; i++){ x -= w[i]; if (x <= 0) return pool[i].san; }
-    return pool[0].san;
+    let best = pool[0];
+    for (const m of pool) if (gcount(m) > gcount(best)) best = m;
+    return best.san;
   }
   outOfBook = true;
-  return engineMove(cfg);
+  return engineMove(engineCfg());
+}
+/* Out of book there is no crowd left to copy, so the fallback engine is
+   matched to the pools instead: low buckets get a shallow search that settles
+   for any near-best move, high ones get the full three plies. */
+function engineCfg(){
+  const mean = pools.reduce((a,b) => a + b, 0) / pools.length;
+  if (mean < 1500) return {depth:1, wild:0.18};
+  if (mean < 2000) return {depth:2, wild:0.05};
+  return {depth:3, wild:0};
 }
 const gcount = m => (m.white||0) + (m.draws||0) + (m.black||0);
 
@@ -433,14 +419,13 @@ const gcount = m => (m.white||0) + (m.draws||0) + (m.black||0);
 const cache = new Map();
 let lastCall = 0;
 async function getBook(fen){
-  const cfg = LEVELS[level];
   const key = fen + "|" + poolParam();
   if (cache.has(key)) return cache.get(key);
   if (apiDown) return null;
   const gap = Date.now() - lastCall;
   if (gap < 900) await sleep(900 - gap);
   const url = "https://explorer.lichess.ovh/lichess?variant=standard&moves=10&topGames=0&recentGames=0"
-    + "&speeds=" + cfg.speeds + "&ratings=" + poolParam() + "&fen=" + encodeURIComponent(fen);
+    + "&speeds=" + SPEEDS + "&ratings=" + poolParam() + "&fen=" + encodeURIComponent(fen);
   let why = "";
   for (let attempt = 0; attempt < 2; attempt++){
     try{
@@ -967,14 +952,12 @@ async function updateEval(){
 }
 
 /* ============================ pools ============================
-   The level seeds a selection; widening it trades strength for coverage,
-   which is the trade you want once a line stops appearing in the games of
-   the band you picked. The cache key carries the pools, so flipping back
-   to a set you have already read costs no request. */
+   Widening trades strength for coverage, which is the trade you want once a
+   line stops appearing in the games of the band you picked. The cache key
+   carries the pools, so flipping back to a set you have already read costs
+   no request. */
 function poolParam(){ return pools.join(","); }
 function poolLabel(){
-  const preset = LEVELS[level].ratings.split(",");
-  if (preset.length === pools.length && preset.every((v,i) => +v === pools[i])) return LEVELS[level].pool;
   if (pools.length === 1) return String(pools[0]);
   const idx = pools.map(v => BUCKETS.indexOf(v));
   const run = idx.every((v,i) => i === 0 || v === idx[i-1] + 1);
@@ -994,7 +977,8 @@ function renderChips(){
     box.appendChild(b);
   });
   $("widen").disabled = pools.length >= BUCKETS.length;
-  $("poolreset").disabled = poolLabel() === LEVELS[level].pool;
+  $("poolreset").disabled = pools.length === DEFAULT_POOLS.length
+    && DEFAULT_POOLS.every((v,i) => v === pools[i]);
 }
 function setPools(next){
   const sorted = BUCKETS.filter(v => next.includes(v));
@@ -1009,7 +993,6 @@ function widenPool(){
   if (hi < BUCKETS.length - 1) next.push(BUCKETS[hi+1]);
   setPools(next);
 }
-function levelPools(){ return LEVELS[level].ratings.split(",").map(Number); }
 
 /* ===================== rating a played move =====================
    Every position the game has reached leaves a record here, so a move is
@@ -1072,19 +1055,8 @@ function rateMove(n){                        // n = 1-based ply
 }
 
 /* ============================ controls ============================ */
-const lv = $("level");
-Object.entries(LEVELS).forEach(([k,v]) => {
-  const o = document.createElement("option"); o.value = k; o.textContent = v.label; lv.appendChild(o);
-});
-lv.value = level;
-lv.onchange = () => {
-  level = lv.value;
-  lv.title = LEVELS[level].blurb;
-  pools = levelPools(); renderChips();
-  refreshPosition();
-};
 $("widen").onclick = widenPool;
-$("poolreset").onclick = () => setPools(levelPools());
+$("poolreset").onclick = () => setPools(DEFAULT_POOLS);
 $("side").onchange = () => { userColor = $("side").value; orientation = userColor; newGame(); };
 $("newg").onclick = newGame;
 $("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; draw(); };
@@ -1194,9 +1166,8 @@ function newGame(){
   refreshPosition();
 }
 
-lv.title = LEVELS[level].blurb;    // the description lives on the selector now
 if (token) $("tok").textContent = "Token saved";
-pools = levelPools(); renderChips();
+pools = DEFAULT_POOLS.slice(); renderChips();
 setPanel(true);
 draw();
 newGame();
