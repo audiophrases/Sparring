@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Book Moves — play the crowd</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+<style>
+:root{
+  --ink:#141b24;
+  --panel:#1c2734;
+  --panel-2:#233141;
+  --line:#31404f;
+  --text:#dde5ed;
+  --dim:#8496a6;
+  --gold:#e3a72f;
+  --gold-dim:#8a6a24;
+  --teal:#4fb3a5;
+  --sq-light:#d5dcdd;
+  --sq-dark:#557282;
+  --sel:#e3a72f;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--ink);color:var(--text);font-family:var(--mono);-webkit-font-smoothing:antialiased}
+body{padding:14px 14px 40px;font-size:14px;line-height:1.45}
+.wrap{max-width:1080px;margin:0 auto}
+
+/* header */
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;
+  border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}
+h1{font-family:var(--serif);font-size:23px;font-weight:400;letter-spacing:.01em}
+h1 em{font-style:italic;color:var(--gold)}
+.tag{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+
+/* layout */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,368px);gap:18px;align-items:start}
+@media(max-width:860px){.cols{grid-template-columns:1fr}}
+
+/* board */
+.boardwrap{position:relative}
+.board{display:grid;grid-template-columns:repeat(8,1fr);aspect-ratio:1;
+  border:1px solid var(--line);border-radius:3px;overflow:hidden;touch-action:manipulation}
+.sq{position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
+.sq.l{background:var(--sq-light)}
+.sq.d{background:var(--sq-dark)}
+.pc{font-size:min(9.2vw,58px);line-height:1;pointer-events:none;
+  transform:translateY(-3%);text-shadow:0 1px 2px rgba(0,0,0,.35)}
+.pc.w{color:#fbfbf8;-webkit-text-stroke:1.4px #2c3a44}
+.pc.b{color:#242f38;-webkit-text-stroke:1.4px #0d1319}
+.sq .co{position:absolute;font-family:var(--mono);font-size:9px;opacity:.5;pointer-events:none}
+.sq .co.f{right:2px;bottom:0}
+.sq .co.r{left:2px;top:0}
+.sq.l .co{color:#4a5c66}.sq.d .co{color:#dce4e6}
+.sq.last::after{content:"";position:absolute;inset:0;background:rgba(227,167,47,.28)}
+.sq.sel::after{content:"";position:absolute;inset:0;background:rgba(227,167,47,.45)}
+.dot{position:absolute;width:26%;height:26%;border-radius:50%;background:rgba(20,27,36,.34)}
+.sq.l .dot{background:rgba(20,27,36,.3)}
+.ring{position:absolute;inset:6%;border-radius:50%;border:4px solid rgba(20,27,36,.32)}
+.sq.chk::after{content:"";position:absolute;inset:0;
+  background:radial-gradient(circle,rgba(214,72,60,.85),rgba(214,72,60,0) 72%)}
+
+/* ribbon — the signature element */
+.ribbon{margin-top:12px;background:var(--panel);border:1px solid var(--line);
+  border-left:3px solid var(--gold);border-radius:3px;padding:12px 14px;
+  transition:border-left-color .35s ease,background .35s ease}
+.ribbon.off{border-left-color:var(--line);background:var(--panel-2)}
+.ribbon .eco{font-size:10.5px;letter-spacing:.16em;color:var(--gold);text-transform:uppercase}
+.ribbon.off .eco{color:var(--dim)}
+.ribbon .name{font-family:var(--serif);font-size:19.5px;line-height:1.25;margin-top:3px}
+.ribbon .sub{font-size:11.5px;color:var(--dim);margin-top:6px}
+
+/* evaluation bar — length is the score, height is how many moves hold it.
+   The trough sits mid-tone so a thinned segment stays legible whether it is
+   the light one or the dark one. */
+.evalbar{position:relative;margin-top:10px;height:26px;background:#46545f;
+  border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.evalbar i{position:absolute;top:50%;height:100%;transform:translateY(-50%);
+  transition:width .45s ease,height .45s ease}
+.evalbar .w{left:0;background:#eef1f2}
+.evalbar .b{right:0;background:#1b242d}
+.evalbar .val{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  background:rgba(20,27,36,.86);color:var(--text);border-radius:2px;
+  padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap}
+.evalbar.think .val{color:var(--dim)}
+
+/* controls */
+.ctl{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+button,select{font-family:var(--mono);font-size:12.5px;color:var(--text);
+  background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  padding:7px 11px;cursor:pointer}
+button:hover,select:hover{background:var(--panel-2);border-color:var(--gold-dim)}
+button:focus-visible,select:focus-visible,.sq:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+button.on{border-color:var(--gold);color:var(--gold)}
+
+/* cards */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  padding:13px 14px;margin-bottom:12px}
+.card h2{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--dim);font-weight:400;margin-bottom:11px;display:flex;justify-content:space-between;gap:8px}
+.card h2 span{color:var(--gold);letter-spacing:.06em}
+
+/* candidate move rows */
+.mv{display:block;width:100%;text-align:left;background:none;border:0;border-radius:2px;
+  padding:6px 5px;margin:0 -5px;cursor:default}
+.mv+.mv{border-top:1px solid rgba(49,64,79,.6)}
+.mv .top{display:flex;align-items:baseline;gap:8px}
+.mv .san{font-size:14.5px;min-width:52px}
+.mv .pct{font-size:13px;color:var(--gold);min-width:44px;text-align:right}
+.mv .n{font-size:10.5px;color:var(--dim);margin-left:auto}
+.mv.played .san{color:var(--gold)}
+.bar{display:flex;height:5px;border-radius:2px;overflow:hidden;margin-top:5px;background:var(--panel-2)}
+.bar i{display:block;transition:width .4s ease}
+.bar .bw{background:#e6e9ea}.bar .bd{background:#6b7d8a}.bar .bb{background:#2b3742}
+.freq{height:2px;background:var(--gold);opacity:.55;margin-top:4px;transition:width .4s ease}
+.legend{font-size:10px;color:var(--dim);margin-top:10px;display:flex;gap:12px;flex-wrap:wrap}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:1px;margin-right:4px;vertical-align:-1px}
+
+/* moves list */
+.moves{font-size:13px;max-height:190px;overflow:auto;line-height:1.9}
+.moves .no{color:var(--dim);margin-right:5px}
+.moves b{font-weight:400;margin-right:11px}
+.moves .ob{color:var(--dim)}
+
+/* status */
+.note{font-size:12px;color:var(--dim);min-height:1.4em}
+.note b{color:var(--text);font-weight:400}
+.note .hot{color:var(--gold)}
+.warn{border-left:2px solid var(--gold-dim);padding-left:9px;color:var(--dim);font-size:11.5px;margin-top:10px}
+
+/* promotion */
+.promo{position:absolute;inset:0;background:rgba(20,27,36,.86);display:none;
+  align-items:center;justify-content:center;gap:8px;z-index:5}
+.promo.show{display:flex}
+.promo button{font-size:34px;line-height:1;padding:8px 12px;background:var(--panel)}
+
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Book <em>Moves</em></h1>
+  <div class="tag">plays what humans actually play</div>
+</header>
+
+<div class="cols">
+  <div>
+    <div class="boardwrap">
+      <div class="board" id="board"></div>
+      <div class="promo" id="promo"></div>
+    </div>
+
+    <div class="evalbar" id="evalbar" title="Engine evaluation, from White's point of view">
+      <i class="w" id="evalw"></i>
+      <i class="b" id="evalb"></i>
+      <span class="val" id="evaltxt">0.0</span>
+    </div>
+
+    <div class="ribbon" id="ribbon">
+      <div class="eco" id="eco">Opening</div>
+      <div class="name" id="oname">Starting position</div>
+      <div class="sub" id="osub">Make a move to begin.</div>
+    </div>
+
+    <div class="ctl">
+      <select id="level" title="Opponent strength"></select>
+      <select id="side" title="Your colour">
+        <option value="w">You play White</option>
+        <option value="b">You play Black</option>
+      </select>
+      <button id="newg">New game</button>
+      <button id="undo">Take back</button>
+      <button id="flip">Flip</button>
+      <button id="sparr" class="on">Sparring: On</button>
+      <button id="peek" class="on">Show candidates</button>
+      <button id="pgn">Copy PGN</button>
+      <button id="retry">Retry database</button>
+      <button id="tok">Lichess token</button>
+    </div>
+
+    <div class="note" id="note" style="margin-top:11px"></div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Human choices here <span id="poptot"></span></h2>
+      <div id="cands" class="note">Waiting for the position…</div>
+      <div class="legend" id="legend" style="display:none">
+        <span><i style="background:#e6e9ea"></i>White wins</span>
+        <span><i style="background:#6b7d8a"></i>Draw</span>
+        <span><i style="background:#2b3742"></i>Black wins</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Game <span id="depth"></span></h2>
+      <div class="moves" id="moves"><span class="ob">No moves yet.</span></div>
+    </div>
+
+    <div class="card">
+      <h2>How this opponent thinks</h2>
+      <div class="note" id="expl"></div>
+      <div class="warn" id="offline" style="display:none"></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+/* ============================ config ============================ */
+const LEVELS = {
+  beginner: {label:"Beginner · ~1200",  ratings:"1000,1200,1400",      speeds:"blitz,rapid,classical", temp:1.9, minGames:1, depth:1, wild:0.22,
+             blurb:"Copies the club-beginner crowd (1000–1400): sound first moves, then the popular-but-loose tries. Sometimes plays a move almost nobody plays."},
+  club:     {label:"Club · ~1600",      ratings:"1400,1600,1800,2000", speeds:"blitz,rapid,classical", temp:1.15, minGames:2, depth:2, wild:0.07,
+             blurb:"Samples the 1400–2000 pool in proportion to how often each move is really played. Mainstream, but not always the top choice."},
+  strong:   {label:"Strong · ~2100",    ratings:"1800,2000,2200,2500", speeds:"blitz,rapid,classical", temp:0.7,  minGames:5, depth:3, wild:0,
+             blurb:"Leans hard toward the main line of the 1800–2500 pool, with occasional respectable sidelines."},
+  master:   {label:"Master · 2500+",    ratings:"2000,2200,2500",      speeds:"blitz,rapid,classical", temp:0.32, minGames:4, depth:3, wild:0,
+             blurb:"Near enough the main line every time: whatever the strongest pools Lichess exposes (2000+) play most in this exact position."}
+};
+const FILES = "abcdefgh";
+const GLYPH = {p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
+
+/* offline fallback names, keyed by SAN sequence */
+const LOCAL_ECO = {
+"e4":["B00","King's Pawn Game"],"d4":["A40","Queen's Pawn Game"],"c4":["A10","English Opening"],
+"Nf3":["A04","Zukertort Opening"],"g3":["A00","Benko / Hungarian Opening"],"b3":["A01","Nimzo-Larsen Attack"],"f4":["A02","Bird's Opening"],
+"e4 e5":["C20","King's Pawn Game"],"e4 c5":["B20","Sicilian Defence"],"e4 e6":["C00","French Defence"],
+"e4 c6":["B10","Caro-Kann Defence"],"e4 d5":["B01","Scandinavian Defence"],"e4 Nf6":["B02","Alekhine's Defence"],
+"e4 d6":["B07","Pirc Defence"],"e4 g6":["B06","Modern Defence"],"e4 Nc6":["B00","Nimzowitsch Defence"],
+"e4 e5 Nf3":["C40","King's Knight Opening"],"e4 e5 Nf3 Nc6":["C44","King's Knight Opening"],
+"e4 e5 Nf3 Nc6 Bb5":["C60","Ruy Lopez"],"e4 e5 Nf3 Nc6 Bb5 a6":["C68","Ruy Lopez: Morphy Defence"],
+"e4 e5 Nf3 Nc6 Bb5 a6 Ba4":["C70","Ruy Lopez: Morphy Defence"],
+"e4 e5 Nf3 Nc6 Bb5 a6 Bxc6":["C68","Ruy Lopez: Exchange Variation"],
+"e4 e5 Nf3 Nc6 Bb5 Nf6":["C65","Ruy Lopez: Berlin Defence"],
+"e4 e5 Nf3 Nc6 Bc4":["C50","Italian Game"],"e4 e5 Nf3 Nc6 Bc4 Bc5":["C50","Italian Game: Giuoco Piano"],
+"e4 e5 Nf3 Nc6 Bc4 Nf6":["C55","Italian Game: Two Knights Defence"],
+"e4 e5 Nf3 Nc6 d4":["C44","Scotch Game"],"e4 e5 Nf3 Nc6 d4 exd4 Nxd4":["C45","Scotch Game"],
+"e4 e5 Nf3 Nc6 Nc3":["C46","Three Knights Opening"],"e4 e5 Nf3 Nc6 Nc3 Nf6":["C46","Four Knights Game"],
+"e4 e5 Nf3 d6":["C41","Philidor Defence"],"e4 e5 Nf3 Nf6":["C42","Petrov's Defence"],
+"e4 e5 f4":["C30","King's Gambit"],"e4 e5 Bc4":["C23","Bishop's Opening"],"e4 e5 Nc3":["C25","Vienna Game"],
+"e4 c5 Nf3":["B27","Sicilian Defence"],"e4 c5 Nf3 d6":["B50","Sicilian Defence"],
+"e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3":["B54","Sicilian: Open"],
+"e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6":["B90","Sicilian: Najdorf Variation"],
+"e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6":["B56","Sicilian: Classical Variation"],
+"e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6":["B70","Sicilian: Dragon Variation"],
+"e4 c5 Nf3 e6":["B40","Sicilian Defence"],"e4 c5 Nf3 Nc6":["B30","Sicilian: Old Sicilian"],
+"e4 c5 Nf3 Nc6 Bb5":["B30","Sicilian: Rossolimo Attack"],"e4 c5 Nf3 d6 Bb5+":["B51","Sicilian: Moscow Variation"],
+"e4 c5 c3":["B22","Sicilian: Alapin Variation"],"e4 c5 Nc3":["B23","Sicilian: Closed"],
+"e4 c5 d4":["B21","Sicilian: Smith-Morra Gambit"],
+"e4 e6 d4":["C00","French Defence"],"e4 e6 d4 d5":["C01","French Defence"],
+"e4 e6 d4 d5 Nc3":["C10","French: Paulsen Variation"],"e4 e6 d4 d5 Nc3 Bb4":["C15","French: Winawer Variation"],
+"e4 e6 d4 d5 Nc3 Nf6":["C11","French: Classical Variation"],"e4 e6 d4 d5 e5":["C02","French: Advance Variation"],
+"e4 e6 d4 d5 exd5":["C01","French: Exchange Variation"],"e4 e6 d4 d5 Nd2":["C03","French: Tarrasch Variation"],
+"e4 c6 d4 d5":["B12","Caro-Kann Defence"],"e4 c6 d4 d5 Nc3":["B15","Caro-Kann: Main Line"],
+"e4 c6 d4 d5 e5":["B12","Caro-Kann: Advance Variation"],"e4 c6 d4 d5 exd5":["B13","Caro-Kann: Exchange Variation"],
+"d4 d5":["D00","Queen's Pawn Game"],"d4 Nf6":["A45","Indian Defence"],"d4 f5":["A80","Dutch Defence"],
+"d4 d5 c4":["D06","Queen's Gambit"],"d4 d5 c4 e6":["D30","Queen's Gambit Declined"],
+"d4 d5 c4 c6":["D10","Slav Defence"],"d4 d5 c4 dxc4":["D20","Queen's Gambit Accepted"],
+"d4 d5 c4 e6 Nc3 Nf6":["D35","Queen's Gambit Declined"],"d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4":["D15","Slav: Main Line"],
+"d4 d5 c4 e6 Nf3 Nf6 Nc3 c6":["D43","Semi-Slav Defence"],"d4 d5 Nf3":["D02","Queen's Pawn Game"],
+"d4 d5 Bf4":["D00","London System"],"d4 Nf6 Bf4":["A45","London System"],"d4 Nf6 Nf3 d5 Bf4":["D02","London System"],
+"d4 Nf6 c4":["A50","Indian Defence"],"d4 Nf6 c4 e6":["E00","Indian: East Indian"],
+"d4 Nf6 c4 e6 Nc3 Bb4":["E20","Nimzo-Indian Defence"],"d4 Nf6 c4 e6 Nf3 b6":["E12","Queen's Indian Defence"],
+"d4 Nf6 c4 e6 g3":["E00","Catalan Opening"],"d4 Nf6 c4 g6":["E60","King's Indian Defence"],
+"d4 Nf6 c4 g6 Nc3 Bg7 e4 d6":["E70","King's Indian Defence"],"d4 Nf6 c4 g6 Nc3 d5":["D80","Grünfeld Defence"],
+"d4 Nf6 c4 c5":["A56","Benoni Defence"],"d4 Nf6 c4 e5":["A43","Englund / Budapest"],
+"d4 Nf6 c4 e6 Nc3 Bb4 e3":["E40","Nimzo-Indian: Rubinstein"],
+"c4 e5":["A20","English: Reversed Sicilian"],"c4 c5":["A30","English: Symmetrical"],
+"c4 Nf6":["A15","English: Anglo-Indian"],"c4 e6":["A13","English Opening"],
+"Nf3 d5 g3":["A07","King's Indian Attack"],"e4 e5 Nf3 Nc6 Bc4 Bc5 b4":["C51","Evans Gambit"],
+"e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5":["C57","Two Knights: Fried Liver Attack"]
+};
+
+/* ============================ state ============================ */
+let game = new Chess();
+let orientation = "w";
+let userColor = "w";
+let level = "club";
+let book = null;          // explorer payload for the current position
+let lastName = null, lastEco = null, bookPlies = 0, outOfBook = false;
+let sel = null, legalTargets = [], lastMove = null, busy = false, peek = true;
+let sparringMode = true;  // false = free play, you move both sides
+let pending = null;       // promotion pending {from,to,color}
+let apiDown = false;
+let token = "";
+try { token = localStorage.getItem("lichessToken") || ""; } catch(e){}
+
+const $ = id => document.getElementById(id);
+
+/* ============================ board ============================ */
+const boardEl = $("board");
+const cells = [];
+for (let i = 0; i < 64; i++) {
+  const d = document.createElement("div");
+  d.className = "sq";
+  d.tabIndex = 0;
+  d.addEventListener("click", () => onSquare(i));
+  d.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSquare(i); } });
+  boardEl.appendChild(d);
+  cells.push(d);
+}
+function sqName(i){
+  let r = Math.floor(i/8), f = i%8;
+  if (orientation === "b"){ r = 7-r; f = 7-f; }
+  return FILES[f] + (8-r);
+}
+function draw(){
+  const b = game.board();
+  const kingSq = game.in_check() ? findKing(game.turn()) : null;
+  for (let i = 0; i < 64; i++){
+    const name = sqName(i);
+    const f = FILES.indexOf(name[0]), r = 8 - parseInt(name[1]);
+    const p = b[r][f];
+    const c = cells[i];
+    c.className = "sq " + ((r+f) % 2 === 0 ? "l" : "d");
+    if (lastMove && (name === lastMove.from || name === lastMove.to)) c.classList.add("last");
+    if (sel === name) c.classList.add("sel");
+    if (kingSq === name) c.classList.add("chk");
+    c.innerHTML = "";
+    if (p){
+      const s = document.createElement("div");
+      s.className = "pc " + p.color;
+      s.textContent = GLYPH[p.type];
+      c.appendChild(s);
+    }
+    if (legalTargets.includes(name)){
+      const m = document.createElement("div");
+      m.className = p ? "ring" : "dot";
+      c.appendChild(m);
+    }
+    const dr = Math.floor(i/8), df = i%8;
+    if (dr === 7){ const e = document.createElement("span"); e.className = "co f"; e.textContent = name[0]; c.appendChild(e); }
+    if (df === 0){ const e = document.createElement("span"); e.className = "co r"; e.textContent = name[1]; c.appendChild(e); }
+  }
+}
+function findKing(color){
+  const b = game.board();
+  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++){
+    const p = b[r][f];
+    if (p && p.type === "k" && p.color === color) return FILES[f] + (8-r);
+  }
+  return null;
+}
+
+/* ============================ interaction ============================ */
+function onSquare(i){
+  if (busy || game.game_over()) return;
+  if (sparringMode && game.turn() !== userColor) return;
+  const name = sqName(i);
+  if (sel && legalTargets.includes(name)){
+    const opts = game.moves({square: sel, verbose: true}).filter(m => m.to === name);
+    if (opts.some(m => m.flags.includes("p"))) { pending = {from: sel, to: name, color: game.turn()}; showPromo(); return; }
+    commit({from: sel, to: name});
+    return;
+  }
+  const piece = game.get(name);
+  if (piece && piece.color === game.turn()){
+    sel = name;
+    legalTargets = game.moves({square: name, verbose: true}).map(m => m.to);
+  } else { sel = null; legalTargets = []; }
+  draw();
+}
+function showPromo(){
+  const box = $("promo"); box.innerHTML = ""; box.classList.add("show");
+  ["q","r","b","n"].forEach(t => {
+    const b = document.createElement("button");
+    b.innerHTML = '<span class="pc ' + pending.color + '" style="font-size:34px">' + GLYPH[t] + '</span>';
+    b.onclick = () => { box.classList.remove("show"); commit({from: pending.from, to: pending.to, promotion: t}); };
+    box.appendChild(b);
+  });
+}
+function commit(mv){
+  const before = book;
+  const m = game.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
+  if (!m) { sel = null; legalTargets = []; draw(); return; }
+  sel = null; legalTargets = []; lastMove = m;
+  reportUserMove(m, before);
+  draw(); renderMoves(); updateEval();
+  step();
+}
+
+/* report how popular the human's own move was */
+function reportUserMove(m, prev){
+  if (!prev || !prev.moves || !prev.moves.length){
+    $("note").innerHTML = outOfBook
+      ? '<b>' + m.san + '</b> — past the database. Both sides are on their own now.'
+      : '<b>' + m.san + '</b>';
+    return;
+  }
+  const tot = prev.moves.reduce((s,x) => s + gcount(x), 0);
+  const hit = prev.moves.find(x => x.san === m.san);
+  if (!hit){
+    $("note").innerHTML = '<b>' + m.san + '</b> — <span class="hot">not in the database</span> at this level. You just left book.';
+    return;
+  }
+  const pct = 100 * gcount(hit) / tot;
+  const rank = prev.moves.slice().sort((a,b) => gcount(b)-gcount(a)).findIndex(x => x.san === m.san) + 1;
+  const word = pct > 40 ? "the main choice" : pct > 15 ? "a common choice" : pct > 3 ? "a sideline" : "rare";
+  $("note").innerHTML = '<b>' + m.san + '</b> — ' + word + ': <span class="hot">' + pct.toFixed(1) +
+    '%</span> of ' + LEVELS[level].label.split("·")[1].trim() + ' players, ' + fmt(gcount(hit)) +
+    ' games (#' + rank + ' most played).';
+}
+
+/* ============================ turn loop ============================ */
+async function step(){
+  busy = true;
+  book = null; renderCands(); renderRibbon();
+  if (game.game_over()){ finish(); busy = false; return; }
+  const data = await getBook(game.fen());
+  book = data;
+  absorbOpening(data);
+  renderRibbon(); renderCands();
+  if (!sparringMode || game.turn() === userColor){ busy = false; return; }
+  await sleep(260);
+  const mv = chooseMove(data);
+  const m = game.move(mv);
+  lastMove = m;
+  draw(); renderMoves(); updateEval();
+  if (game.game_over()){ book = null; renderCands(); finish(); busy = false; return; }
+  const d2 = await getBook(game.fen());
+  book = d2; absorbOpening(d2);
+  renderRibbon(); renderCands();
+  busy = false;
+}
+function finish(){
+  let msg;
+  if (game.in_checkmate()) msg = sparringMode
+    ? (game.turn() === userColor ? "Checkmate — you lost." : "Checkmate — you won.")
+    : "Checkmate — " + (game.turn() === "w" ? "Black" : "White") + " wins.";
+  else if (game.in_stalemate()) msg = "Stalemate. Draw.";
+  else if (game.in_threefold_repetition()) msg = "Draw by repetition.";
+  else if (game.insufficient_material()) msg = "Draw — not enough material.";
+  else msg = "Draw by the fifty-move rule.";
+  $("note").innerHTML = "<b>" + msg + "</b> Start a new game whenever you like.";
+}
+
+/* pick the opponent's move: book first, engine after */
+function chooseMove(data){
+  const cfg = LEVELS[level];
+  const pool = data && data.moves ? data.moves.filter(m => gcount(m) >= cfg.minGames) : [];
+  if (pool.length){
+    outOfBook = false;
+    if (Math.random() < cfg.wild){
+      const tail = pool.slice(Math.floor(pool.length/2));
+      const p = tail.length ? tail : pool;
+      return p[Math.floor(Math.random()*p.length)].san;
+    }
+    const max = Math.max(...pool.map(gcount));
+    const w = pool.map(m => Math.pow(gcount(m)/max, 1/cfg.temp));
+    const sum = w.reduce((a,b) => a+b, 0);
+    let x = Math.random() * sum;
+    for (let i = 0; i < pool.length; i++){ x -= w[i]; if (x <= 0) return pool[i].san; }
+    return pool[0].san;
+  }
+  outOfBook = true;
+  return engineMove(cfg);
+}
+const gcount = m => (m.white||0) + (m.draws||0) + (m.black||0);
+
+/* ============================ opening explorer ============================ */
+const cache = new Map();
+let lastCall = 0;
+async function getBook(fen){
+  const cfg = LEVELS[level];
+  const key = fen + "|" + cfg.ratings;
+  if (cache.has(key)) return cache.get(key);
+  if (apiDown) return null;
+  const gap = Date.now() - lastCall;
+  if (gap < 900) await sleep(900 - gap);
+  const url = "https://explorer.lichess.ovh/lichess?variant=standard&moves=10&topGames=0&recentGames=0"
+    + "&speeds=" + cfg.speeds + "&ratings=" + cfg.ratings + "&fen=" + encodeURIComponent(fen);
+  let why = "";
+  for (let attempt = 0; attempt < 2; attempt++){
+    try{
+      lastCall = Date.now();
+      const headers = token ? {Authorization: "Bearer " + token} : {};
+      const r = await fetch(url, {headers});
+      if (r.status === 429){ why = "rate limited (429)"; await sleep(2600); continue; }
+      if (r.status === 401){ why = "401"; apiDown = true; showOffline("401"); return null; }
+      if (!r.ok) throw new Error("Lichess replied " + r.status);
+      const j = await r.json();
+      cache.set(key, j);
+      if (apiDown){ apiDown = false; $("offline").style.display = "none"; }
+      return j;
+    }catch(e){
+      why = (e && e.message) || String(e);
+      if (attempt === 1){ apiDown = true; showOffline(why); return null; }
+    }
+  }
+  showOffline(why || "no response"); apiDown = true;
+  return null;
+}
+function showOffline(why){
+  const box = $("offline");
+  box.style.display = "block";
+  if (why === "401"){
+    box.innerHTML = '<b>Lichess needs a token for the opening explorer.</b> Since March 2026 the explorer '
+      + 'rejects anonymous requests. Get a free one — it takes about thirty seconds:<br><br>'
+      + '1. Open <a href="https://lichess.org/account/oauth/token/create" target="_blank" '
+      + 'style="color:var(--gold)">lichess.org/account/oauth/token/create</a> while logged in.<br>'
+      + '2. Give it any description. Leave every scope unticked — reading the explorer needs none.<br>'
+      + '3. Submit, copy the token, and paste it into “Lichess token” here.<br><br>'
+      + 'It stays in this browser only. Until then the built-in engine plays.';
+    return;
+  }
+  const blocked = /Failed to fetch|NetworkError|Load failed|CSP|not allowed/i.test(why);
+  box.innerHTML = blocked
+    ? '<b>The database request was blocked, not refused.</b> Preview sandboxes only allow a fixed list of '
+      + 'domains. Open this file directly in your browser instead.'
+      + '<br><br><span style="opacity:.7">Reported as: ' + why + '</span>'
+    : '<b>Lichess did not answer.</b> ' + why + '. The built-in engine is playing meanwhile — '
+      + 'use “Retry database” once the connection is back.';
+}
+function absorbOpening(data){
+  const hist = game.history();
+  if (data && data.opening && data.opening.name){
+    lastName = data.opening.name; lastEco = data.opening.eco; bookPlies = hist.length;
+  } else if (!data){
+    for (let n = Math.min(hist.length, 12); n > 0; n--){
+      const k = hist.slice(0, n).join(" ");
+      if (LOCAL_ECO[k]){ lastEco = LOCAL_ECO[k][0]; lastName = LOCAL_ECO[k][1]; bookPlies = n; break; }
+    }
+  }
+  outOfBook = !(data && data.moves && data.moves.length);
+}
+
+/* ============================ rendering ============================ */
+function renderRibbon(){
+  const rb = $("ribbon");
+  if (!lastName){
+    $("eco").textContent = "Opening"; $("oname").textContent = "Starting position";
+    $("osub").textContent = "Make a move to begin."; rb.classList.remove("off");
+    return;
+  }
+  $("eco").textContent = (lastEco ? lastEco + " · " : "") + (outOfBook ? "last named line" : "in book");
+  $("oname").textContent = lastName;
+  const ply = game.history().length;
+  $("osub").textContent = outOfBook
+    ? "Out of book after " + Math.ceil(bookPlies/2) + " moves — from here your opponent calculates instead of recalling."
+    : "Named at move " + Math.ceil(bookPlies/2) + " · " + Math.ceil(ply/2) + " played";
+  rb.classList.toggle("off", outOfBook);
+  $("depth").textContent = outOfBook ? "out of book" : "";
+}
+function renderCands(){
+  const el = $("cands"), lg = $("legend");
+  if (!peek){ el.innerHTML = '<span class="ob">Hidden. Turn on "Show candidates" to see what humans play.</span>'; lg.style.display="none"; $("poptot").textContent=""; return; }
+  if (busy && !book){ el.textContent = "Reading the database…"; lg.style.display = "none"; $("poptot").textContent = ""; return; }
+  if (!book || !book.moves || !book.moves.length){
+    el.innerHTML = '<span class="ob">' + (apiDown ? "Database unavailable." : "No human games reach this position at this level. You are both improvising.") + '</span>';
+    lg.style.display = "none"; $("poptot").textContent = ""; return;
+  }
+  const moves = book.moves.slice().sort((a,b) => gcount(b) - gcount(a));
+  const tot = moves.reduce((s,m) => s + gcount(m), 0);
+  const max = gcount(moves[0]);
+  $("poptot").textContent = fmt(tot) + " games";
+  el.innerHTML = "";
+  moves.slice(0, 7).forEach(m => {
+    const n = gcount(m), pct = 100*n/tot;
+    const row = document.createElement("div");
+    row.className = "mv";
+    const w = 100*(m.white||0)/n, d = 100*(m.draws||0)/n, b = 100*(m.black||0)/n;
+    row.innerHTML =
+      '<div class="top"><span class="san">' + m.san + '</span>' +
+      '<span class="pct">' + (pct >= 9.95 ? pct.toFixed(0) : pct.toFixed(1)) + '%</span>' +
+      '<span class="n">' + fmt(n) + '</span></div>' +
+      '<div class="freq" style="width:' + (100*n/max) + '%"></div>' +
+      '<div class="bar"><i class="bw" style="width:' + w + '%"></i>' +
+      '<i class="bd" style="width:' + d + '%"></i><i class="bb" style="width:' + b + '%"></i></div>';
+    el.appendChild(row);
+  });
+  lg.style.display = "flex";
+}
+function renderMoves(){
+  const h = game.history();
+  if (!h.length){ $("moves").innerHTML = '<span class="ob">No moves yet.</span>'; return; }
+  let out = "";
+  for (let i = 0; i < h.length; i += 2){
+    out += '<span class="no">' + (i/2+1) + '.</span><b>' + h[i] + '</b>';
+    if (h[i+1]) out += '<b>' + h[i+1] + '</b>';
+  }
+  const m = $("moves"); m.innerHTML = out; m.scrollTop = m.scrollHeight;
+}
+const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1) + "M" : n >= 1000 ? (n/1000).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ============================ fallback engine ============================ */
+const VAL = {p:100, n:320, b:330, r:500, q:900, k:20000};
+const PST = {
+p:[0,0,0,0,0,0,0,0, 50,50,50,50,50,50,50,50, 10,10,20,30,30,20,10,10, 5,5,10,25,25,10,5,5,
+   0,0,0,20,20,0,0,0, 5,-5,-10,0,0,-10,-5,5, 5,10,10,-20,-20,10,10,5, 0,0,0,0,0,0,0,0],
+n:[-50,-40,-30,-30,-30,-30,-40,-50, -40,-20,0,0,0,0,-20,-40, -30,0,10,15,15,10,0,-30,
+   -30,5,15,20,20,15,5,-30, -30,0,15,20,20,15,0,-30, -30,5,10,15,15,10,5,-30,
+   -40,-20,0,5,5,0,-20,-40, -50,-40,-30,-30,-30,-30,-40,-50],
+b:[-20,-10,-10,-10,-10,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,10,10,5,0,-10,
+   -10,5,5,10,10,5,5,-10, -10,0,10,10,10,10,0,-10, -10,10,10,10,10,10,10,-10,
+   -10,5,0,0,0,0,5,-10, -20,-10,-10,-10,-10,-10,-10,-20],
+r:[0,0,0,0,0,0,0,0, 5,10,10,10,10,10,10,5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5,
+   -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, 0,0,0,5,5,0,0,0],
+q:[-20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,5,5,5,0,-10,
+   -5,0,5,5,5,5,0,-5, 0,0,5,5,5,5,0,-5, -10,5,5,5,5,5,0,-10,
+   -10,0,5,0,0,0,0,-10, -20,-10,-10,-5,-5,-10,-10,-20],
+k:[-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30,
+   -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10,
+   20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20]
+};
+function evaluate(g){
+  const b = g.board(); let s = 0;
+  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++){
+    const p = b[r][f]; if (!p) continue;
+    const idx = p.color === "w" ? r*8+f : (7-r)*8+f;
+    const v = VAL[p.type] + PST[p.type][idx];
+    s += p.color === "w" ? v : -v;
+  }
+  return g.turn() === "w" ? s : -s;
+}
+let nodes = 0;
+function quiesce(g, alpha, beta){
+  const stand = evaluate(g);
+  if (stand >= beta) return beta;
+  if (stand > alpha) alpha = stand;
+  if (nodes > 90000) return alpha;
+  const caps = g.moves({verbose:true}).filter(m => m.flags.includes("c") || m.flags.includes("e"));
+  caps.sort((a,x) => (VAL[x.captured]||0) - (VAL[a.captured]||0));
+  for (const m of caps){
+    nodes++;
+    g.move(m);
+    const sc = -quiesce(g, -beta, -alpha);
+    g.undo();
+    if (sc >= beta) return beta;
+    if (sc > alpha) alpha = sc;
+  }
+  return alpha;
+}
+function negamax(g, depth, alpha, beta){
+  if (depth === 0) return quiesce(g, alpha, beta);
+  const ms = g.moves({verbose:true});
+  if (!ms.length) return g.in_check() ? -90000 - depth : 0;
+  ms.sort((a,x) => ((x.captured ? VAL[x.captured] : 0) + (x.promotion ? 800 : 0))
+                 - ((a.captured ? VAL[a.captured] : 0) + (a.promotion ? 800 : 0)));
+  for (const m of ms){
+    if (nodes > 220000) break;
+    nodes++;
+    g.move(m);
+    const sc = -negamax(g, depth-1, -beta, -alpha);
+    g.undo();
+    if (sc >= beta) return beta;
+    if (sc > alpha) alpha = sc;
+  }
+  return alpha;
+}
+function engineMove(cfg){
+  const ms = game.moves({verbose:true});
+  if (cfg.wild && Math.random() < cfg.wild) return ms[Math.floor(Math.random()*ms.length)].san;
+  nodes = 0;
+  let best = ms[0], bestScore = -Infinity;
+  const scored = [];
+  for (const m of ms){
+    game.move(m);
+    const sc = -negamax(game, cfg.depth - 1, -Infinity, Infinity);
+    game.undo();
+    scored.push({m, sc});
+    if (sc > bestScore){ bestScore = sc; best = m; }
+  }
+  if (cfg.depth <= 2){ // let weaker levels choose among near-best moves
+    const band = scored.filter(x => x.sc >= bestScore - (cfg.depth === 1 ? 90 : 35));
+    return band[Math.floor(Math.random()*band.length)].m.san;
+  }
+  return best.san;
+}
+
+/* ===================== evaluation bar (async, shallow) =====================
+   Two plies deep, plus quiescence — but only on leaves that are actually noisy.
+   chess.js 0.10.3 rebuilds every move to disambiguate SAN, so moves() costs
+   ~1.3ms, thousands of times more than evaluate(). Calling it at every quiet
+   leaf is what would make this search take seconds; skipping it there does not
+   cost accuracy, because a leaf only needs captures resolved when the move that
+   reached it was itself a capture, a promotion, or a check.                  */
+const EVAL_BATCH = 4;      // root moves per slice before yielding to the browser
+const RES_MARGIN = 100;    // a move within this of the best still "holds" the position
+const RES_FULL   = 4;      // this much resilience draws the bar at full height
+const RES_MIN    = 0.2;    // an only-move position still draws a visible sliver
+let evalToken = 0;         // cancels a search that a newer move has superseded
+
+const noisier = (a, x) => ((x.captured ? VAL[x.captured] : 0) + (x.promotion ? 800 : 0))
+                        - ((a.captured ? VAL[a.captured] : 0) + (a.promotion ? 800 : 0));
+
+/* the reply ply: score every answer to a root move, from the replier's side */
+function evalReplies(g, alpha, beta){
+  const ms = g.moves({verbose:true});
+  if (!ms.length) return g.in_check() ? -90000 : 0;
+  ms.sort(noisier);
+  for (const m of ms){
+    nodes++;
+    g.move(m);
+    const noisy = m.captured || m.promotion || g.in_check();
+    const sc = -(noisy ? quiesce(g, -beta, -alpha) : evaluate(g));
+    g.undo();
+    if (sc >= beta) return beta;
+    if (sc > alpha) alpha = sc;
+  }
+  return alpha;
+}
+
+/* held so a search in progress keeps the bar it last settled on */
+let evalPct = 50, evalThinSide = null, evalThick = 1;
+function paintEval(pct, label, thinSide, thick, thinking){
+  evalPct = Math.max(0, Math.min(100, pct));
+  evalThinSide = thinSide; evalThick = thick;
+  $("evalw").style.width = evalPct + "%";
+  $("evalb").style.width = (100 - evalPct) + "%";
+  $("evalw").style.height = 100 * (thinSide === "w" ? thick : 1) + "%";
+  $("evalb").style.height = 100 * (thinSide === "b" ? thick : 1) + "%";
+  $("evaltxt").textContent = label;
+  $("evalbar").classList.toggle("think", !!thinking);
+}
+/* centipawns → share of the bar, squashed so ±3 pawns already looks decisive */
+function cpToPct(cp){ return 100 / (1 + Math.exp(-cp/350)); }
+function cpLabel(cp){
+  const p = cp/100;
+  return (p >= 0 ? "+" : "-") + Math.abs(p).toFixed(Math.abs(p) >= 10 ? 0 : 1);
+}
+
+async function updateEval(){
+  const mine = ++evalToken;
+  const g = new Chess(game.fen());
+
+  if (g.game_over()){
+    if (g.in_checkmate()) paintEval(g.turn() === "w" ? 0 : 100, g.turn() === "w" ? "0–1" : "1–0", null, 1);
+    else paintEval(50, "½–½", null, 1);
+    $("evalbar").title = "The game is over.";
+    return;
+  }
+
+  paintEval(evalPct, "…", evalThinSide, evalThick, true);
+  await sleep(0);                       // let the move render before we search
+  if (mine !== evalToken) return;
+
+  /* order the root by static score after the move: alpha climbs sooner, so the
+     reply layer cuts off before it reaches its expensive quiescence leaves */
+  const ms = g.moves({verbose:true});
+  for (const m of ms){ g.move(m); m._s = -evaluate(g); g.undo(); }
+  ms.sort((a, x) => x._s - a._s);
+  /* Resilience needs a real score for every move that lands within RES_MARGIN
+     of the best one, which ordinary alpha-beta cannot give: a refuted move
+     fails low and comes back carrying `best` itself, so a position with one
+     saving move would look like a wall of equally good ones. Searching wide
+     enough to avoid that costs about nine times the nodes, so it is done in
+     two passes instead — a tight one to pin down the best score, then a narrow
+     one that only has to separate the contenders from the rest. */
+  nodes = 0;
+  let best = -Infinity;
+  for (let i = 0; i < ms.length; i++){
+    g.move(ms[i]);
+    ms[i]._v = -evalReplies(g, -Infinity, -best);      // ordinary alpha-beta
+    g.undo();
+    if (ms[i]._v > best) best = ms[i]._v;
+    if (i % EVAL_BATCH === EVAL_BATCH - 1 && i < ms.length - 1){
+      const carried = nodes;            // engineMove may reset the shared counter
+      await sleep(0);
+      if (mine !== evalToken) return;
+      nodes = carried;
+    }
+  }
+
+  /* Second pass over a window only RES_MARGIN wide. Anything below the band
+     fails low and scores best-RES_MARGIN, which weighs nothing — exactly the
+     answer we needed. Best-first order lets a quiet position stop early. */
+  ms.sort((a, x) => x._v - a._v);
+  let resilience = 0, capped = false;
+  for (let i = 0; i < ms.length; i++){
+    if (resilience >= RES_FULL){ capped = true; break; }
+    g.move(ms[i]);
+    const sc = Math.min(best, -evalReplies(g, -(best + 1), -(best - RES_MARGIN)));
+    g.undo();
+    resilience += Math.max(0, 1 - (best - sc) / RES_MARGIN);
+    if (i % EVAL_BATCH === EVAL_BATCH - 1 && i < ms.length - 1){
+      const carried = nodes;
+      await sleep(0);
+      if (mine !== evalToken) return;
+      nodes = carried;
+    }
+  }
+  const thick = Math.min(1, Math.max(RES_MIN, resilience / RES_FULL));
+
+  const white = g.turn() === "w" ? best : -best;    // negamax is side-to-move relative
+  const leader = white > 0 ? "w" : white < 0 ? "b" : null;
+  /* Resilience is measured over the moves of the side to move, so it only
+     describes an advantage when that side is the one holding it. */
+  const thinSide = leader === g.turn() ? leader : null;
+
+  const label = Math.abs(white) >= 9000 ? (white > 0 ? "#" : "-#") : cpLabel(white);
+  const pct = Math.abs(white) >= 9000 ? (white > 0 ? 100 : 0) : cpToPct(white);
+  paintEval(pct, label, thinSide, thick);
+
+  const mover = g.turn() === "w" ? "White" : "Black";
+  $("evalbar").title = "Engine evaluation from White's point of view: " + label
+    + " — " + mover + " has " + (capped ? RES_FULL + " or more moves" : resilience.toFixed(1)
+      + " move" + (resilience >= 1.95 ? "s" : "")) + " that hold the position"
+    + (thinSide ? ". The thin bar means that advantage rests on very few moves." : ".");
+}
+
+/* ============================ controls ============================ */
+const lv = $("level");
+Object.entries(LEVELS).forEach(([k,v]) => {
+  const o = document.createElement("option"); o.value = k; o.textContent = v.label; lv.appendChild(o);
+});
+lv.value = level;
+lv.onchange = () => { level = lv.value; $("expl").textContent = LEVELS[level].blurb; cache.clear(); refreshPosition(); };
+$("side").onchange = () => { userColor = $("side").value; orientation = userColor; newGame(); };
+$("newg").onclick = newGame;
+$("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; draw(); };
+$("peek").onclick = () => { peek = !peek; $("peek").classList.toggle("on", peek);
+  $("peek").textContent = peek ? "Show candidates" : "Candidates hidden"; renderCands(); };
+$("sparr").onclick = () => {
+  sparringMode = !sparringMode;
+  $("sparr").classList.toggle("on", sparringMode);
+  $("sparr").textContent = sparringMode ? "Sparring: On" : "Sparring: Off";
+  sel = null; legalTargets = []; draw();
+  if (!sparringMode){
+    $("note").innerHTML = '<b>Free play.</b> You move both sides; the database keeps following along.';
+    return;
+  }
+  $("note").textContent = "";
+  if (!busy && !game.game_over() && game.turn() !== userColor) step();
+};
+$("undo").onclick = () => {
+  if (busy) return;
+  game.undo(); if (sparringMode && game.turn() !== userColor) game.undo();
+  const h = game.history({verbose:true});
+  lastMove = h.length ? h[h.length-1] : null;
+  sel = null; legalTargets = []; $("note").textContent = "";
+  draw(); renderMoves(); updateEval(); refreshPosition();
+};
+$("pgn").onclick = () => {
+  const txt = game.pgn({max_width:80, newline_char:"\n"});
+  navigator.clipboard.writeText(txt).then(
+    () => { $("pgn").textContent = "PGN copied"; setTimeout(() => $("pgn").textContent = "Copy PGN", 1400); },
+    () => prompt("Copy the PGN:", txt));
+};
+$("tok").onclick = () => {
+  const v = prompt("Paste your Lichess personal access token.\n\nCreate one at lichess.org/account/oauth/token/create — no scopes needed.\nLeave empty to remove the stored token.", token);
+  if (v === null) return;
+  token = v.trim();
+  try { token ? localStorage.setItem("lichessToken", token) : localStorage.removeItem("lichessToken"); } catch(e){}
+  $("tok").textContent = token ? "Token saved" : "Lichess token";
+  apiDown = false; cache.clear(); $("offline").style.display = "none";
+  refreshPosition();
+};
+$("retry").onclick = () => {
+  apiDown = false; cache.clear();
+  $("offline").style.display = "none";
+  $("retry").textContent = "Checking…";
+  refreshPosition().then(() => {
+    $("retry").textContent = apiDown ? "Retry database" : "Database live";
+    setTimeout(() => $("retry").textContent = "Retry database", 2000);
+  });
+};
+async function refreshPosition(){
+  busy = true; book = null; renderCands();
+  book = await getBook(game.fen());
+  absorbOpening(book); renderRibbon(); renderCands();
+  busy = false;
+  if (sparringMode && game.turn() !== userColor && !game.game_over()) step();
+}
+function newGame(){
+  game = new Chess();
+  lastMove = null; sel = null; legalTargets = []; book = null;
+  lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
+  $("note").textContent = ""; draw(); renderMoves(); renderRibbon(); updateEval();
+  refreshPosition();
+}
+
+$("expl").textContent = LEVELS[level].blurb;
+if (token) $("tok").textContent = "Token saved";
+draw();
+newGame();
+</script>
+</body>
+</html>
