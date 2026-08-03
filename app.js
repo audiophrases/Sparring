@@ -184,14 +184,14 @@ let userColor = "w";
 let level = "club";
 let book = null;          // explorer payload for the current position
 let lastName = null, lastEco = null, bookPlies = 0, outOfBook = false;
-let sel = null, legalTargets = [], lastMove = null, busy = false, panelOpen = true;
+let sel = null, legalTargets = [], busy = false, panelOpen = true;
 let coachMode = true;  // false = free play, you move both sides
 let pending = null;       // promotion pending {from,to,color}
 let pools = [];           // selected Lichess rating buckets
 /* Review: the board shows an earlier position while `game` stays at the live
    one, so stepping back and forth costs nothing and never rewrites the game.
    reviewPly is the number of plies shown; null means we are on the live move. */
-let reviewPly = null, reviewGame = null, reviewMove = null, savedNote = null;
+let reviewPly = null, reviewGame = null, savedNote = null;
 let apiDown = false;
 let token = "";
 try { token = localStorage.getItem("lichessToken") || ""; } catch(e){}
@@ -239,7 +239,14 @@ function sqName(i){
 }
 function draw(){
   const view = reviewGame || game;
-  const hl = reviewGame ? reviewMove : lastMove;
+  /* Both halves of the last exchange are lit, the older one fainter, so the
+     reply always has its provocation still on the board. Taken from history
+     rather than a running "last move" so review shows the two that led to
+     whatever position is on screen. */
+  const shown = reviewPly === null ? game.history().length : reviewPly;
+  const hv = verboseHistory();
+  const hl = shown > 0 ? hv[shown-1] : null;
+  const hl2 = shown > 1 ? hv[shown-2] : null;
   const b = view.board();
   const kingSq = view.in_check() ? findKing(view.turn(), view) : null;
   for (let i = 0; i < 64; i++){
@@ -248,6 +255,7 @@ function draw(){
     const p = b[r][f];
     const c = cells[i];
     c.className = "sq " + ((r+f) % 2 === 0 ? "l" : "d");
+    if (hl2 && (name === hl2.from || name === hl2.to)) c.classList.add("prev");
     if (hl && (name === hl.from || name === hl.to)) c.classList.add("last");
     if (sel === name) c.classList.add("sel");
     if (kingSq === name) c.classList.add("chk");
@@ -283,7 +291,7 @@ function gotoPly(n){
   if (reviewPly === null) savedNote = $("note").innerHTML;   // to restore on the way out
   const g = new Chess();
   for (let i = 0; i < n; i++) g.move(h[i].san);
-  reviewPly = n; reviewGame = g; reviewMove = n ? h[n-1] : null;
+  reviewPly = n; reviewGame = g;
   sel = null; legalTargets = [];
   draw(); renderMoves();
   const where = n
@@ -294,7 +302,7 @@ function gotoPly(n){
 }
 function exitReview(){
   if (reviewPly === null) return false;
-  reviewPly = null; reviewGame = null; reviewMove = null;
+  reviewPly = null; reviewGame = null;
   if (savedNote !== null){ $("note").innerHTML = savedNote; savedNote = null; }
   return true;
 }
@@ -337,7 +345,7 @@ function commit(mv){
   const before = book;
   const m = game.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
   if (!m) { sel = null; legalTargets = []; draw(); return; }
-  sel = null; legalTargets = []; lastMove = m;
+  sel = null; legalTargets = [];
   reportUserMove(m, before);
   draw(); renderMoves(); updateEval();
   step();
@@ -377,8 +385,7 @@ async function step(){
   if (!coachMode || game.turn() === userColor){ busy = false; return; }
   await sleep(260);
   const mv = chooseMove(data);
-  const m = game.move(mv);
-  lastMove = m;
+  game.move(mv);
   exitReview();          // the reply is the point — snap back to it
   draw(); renderMoves(); updateEval();
   if (game.game_over()){ book = null; renderCands(); finish(); busy = false; return; }
@@ -553,12 +560,16 @@ function addWidenHint(el, tot){
 }
 function renderMoves(){
   const h = game.history();
+  syncNav();
   if (!h.length){ $("moves").innerHTML = '<span class="ob">No moves yet.</span>'; return; }
+  /* the pair the board is lighting up, so list and board agree in review too */
+  const shown = reviewPly === null ? h.length : reviewPly;
   /* the ply under review is marked, so the arrow keys have somewhere to point;
      a rated ply also carries its mark and hangs the tooltip off data-ply */
   const ply = i => {
     const n = i + 1, r = rateMove(n);
-    const cls = ((reviewPly === n ? "cur " : "") + (r ? RATINGS[r.key].cls : "")).trim();
+    const mark = reviewPly === n ? "cur" : n === shown ? "recent" : n === shown - 1 ? "older" : "";
+    const cls = ((mark ? mark + " " : "") + (r ? RATINGS[r.key].cls : "")).trim();
     const g = r ? RATINGS[r.key].glyph : "";
     return '<b data-ply="' + n + '"' + (cls ? ' class="' + cls + '"' : '') + '>'
       + h[i] + (g ? '<i>' + g + '</i>' : '') + '</b>';
@@ -576,6 +587,12 @@ function renderMoves(){
   const m = $("moves"); m.innerHTML = out;
   const cur = m.querySelector(".cur");
   m.scrollTop = cur ? Math.max(0, cur.offsetTop - m.clientHeight / 2) : m.scrollHeight;
+  /* the element the tip was anchored to has just been replaced; re-anchor so a
+     rating that lands while you are reading it fills itself in */
+  if (tipPly !== null){
+    const again = m.querySelector('b[data-ply="' + tipPly + '"]');
+    if (again) showTip(again, tipPinned); else hideTip();
+  }
 }
 const fmt = n => n >= 1e6 ? (n/1e6).toFixed(1) + "M" : n >= 1000 ? (n/1000).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -641,20 +658,35 @@ function placeTip(el){
   tipEl.style.left = Math.max(8, x) + "px";
   tipEl.style.top = y + "px";
 }
-function showTip(el){
-  const html = tipHtml(+el.dataset.ply);
+/* Hover shows it; a tap pins it, since a touchscreen has no hover to rest in.
+   A pinned tip ignores mouseout and is dismissed by tapping the move again or
+   anywhere off the list. */
+let tipPly = null, tipPinned = false;
+function showTip(el, pin){
+  const n = +el.dataset.ply;
+  const html = tipHtml(n);
   if (!html) return;
   tipEl.innerHTML = html;
   tipEl.hidden = false;
+  tipPly = n; tipPinned = !!pin;
   placeTip(el);                                 // measured only once it is laid out
 }
-const hideTip = () => { tipEl.hidden = true; };
+function hideTip(){ tipEl.hidden = true; tipPly = null; tipPinned = false; }
 $("moves").addEventListener("mouseover", e => {
   const b = e.target.closest("b[data-ply]");
-  if (b) showTip(b);
+  if (b && !tipPinned) showTip(b, false);
 });
 $("moves").addEventListener("mouseout", e => {
-  if (e.target.closest("b[data-ply]")) hideTip();
+  if (e.target.closest("b[data-ply]") && !tipPinned) hideTip();
+});
+$("moves").addEventListener("click", e => {
+  const b = e.target.closest("b[data-ply]");
+  if (!b) return;
+  if (tipPinned && tipPly === +b.dataset.ply) hideTip();
+  else showTip(b, true);
+});
+document.addEventListener("click", e => {
+  if (tipPinned && !e.target.closest("#moves")) hideTip();
 });
 $("moves").addEventListener("scroll", hideTip);
 window.addEventListener("blur", hideTip);
@@ -1086,14 +1118,21 @@ function setCoach(v){
 }
 $("coach").onclick = () => setCoach(!coachMode);
 
+/* on-screen equivalents of the arrow keys, for anyone without a keyboard */
+$("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
+$("next").onclick = () => { if (reviewPly !== null) gotoPly(reviewPly + 1); };
+function syncNav(){
+  const n = game.history().length;
+  $("prev").disabled = n === 0 || reviewPly === 0;
+  $("next").disabled = reviewPly === null;
+}
+
 $("undo").onclick = () => {
   if (busy) return;
   exitReview();
   game.undo(); if (coachMode && game.turn() !== userColor) game.undo();
   evalByPly.length = game.history().length + 1;   // records past here describe moves that no longer exist
   hideTip();
-  const h = game.history({verbose:true});
-  lastMove = h.length ? h[h.length-1] : null;
   sel = null; legalTargets = []; $("note").textContent = "";
   draw(); renderMoves(); updateEval(); refreshPosition();
 };
@@ -1149,7 +1188,7 @@ function newGame(){
   game = new Chess();
   exitReview(); savedNote = null; hideTip();
   evalByPly = []; vhCache = {len:-1, list:[]};
-  lastMove = null; sel = null; legalTargets = []; book = null;
+  sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
   $("note").textContent = ""; draw(); renderMoves(); renderRibbon(); updateEval();
   refreshPosition();

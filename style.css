@@ -21,6 +21,7 @@
   --sq-light:#ebecd0;
   --sq-dark:#779556;
   --hl:rgba(247,247,105,.52);      /* last move */
+  --hl-prev:rgba(247,247,105,.24);   /* the half-move before it */
   --hl-strong:rgba(247,247,105,.72); /* selected piece */
 
   --board:480px;                   /* replaced at runtime; multiple of 8 */
@@ -84,7 +85,10 @@ h1 em{font-style:italic;color:var(--gold)}
 .sq.l .co{color:var(--sq-dark)}
 .sq.d .co{color:var(--sq-light)}
 
-/* highlights sit under the piece: ::before, not ::after */
+/* highlights sit under the piece: ::before, not ::after.
+   prev comes first so that a square belonging to both halves of the exchange
+   is painted at full strength — same specificity, later rule wins. */
+.sq.prev::before{content:"";position:absolute;inset:0;background:var(--hl-prev)}
 .sq.last::before{content:"";position:absolute;inset:0;background:var(--hl)}
 .sq.sel::before{content:"";position:absolute;inset:0;background:var(--hl-strong)}
 .sq.chk::before{content:"";position:absolute;inset:0;
@@ -126,7 +130,10 @@ button,select{font-family:var(--mono);font-size:12.5px;color:var(--text);
 button:hover,select:hover{background:var(--panel-2);border-color:var(--gold-dim)}
 button:focus-visible,select:focus-visible,.sq:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 button.on{border-color:var(--gold);color:var(--gold)}
-.hint{font-size:11px;color:var(--dim);align-self:center;margin-left:auto;white-space:nowrap}
+button:disabled{opacity:.38;cursor:default}
+button:disabled:hover{background:var(--panel);border-color:var(--line)}
+/* step-through arrows: square-ish, so they read as a pair */
+.nav{padding:7px 12px;line-height:1;font-size:11px}
 
 /* rating pools — widen the sample when a position runs thin */
 .pools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:8px}
@@ -135,8 +142,6 @@ button.on{border-color:var(--gold);color:var(--gold)}
 .chip{font-size:11px;padding:4px 7px;color:var(--dim)}
 .chip.on{color:var(--gold);border-color:var(--gold)}
 .mini{font-size:11px;padding:4px 8px}
-.mini:disabled{opacity:.38;cursor:default}
-.mini:disabled:hover{background:var(--panel);border-color:var(--line)}
 
 /* cards */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:3px;
@@ -178,8 +183,11 @@ button.on{border-color:var(--gold);color:var(--gold)}
 .moves .no{color:var(--dim);margin-right:5px}
 /* nowrap keeps castling ("O-O") from breaking across lines at its hyphen */
 .moves b{font-weight:400;margin-right:7px;white-space:nowrap}
+/* the review cursor, then the two half-moves the board is lighting up */
 .moves b.cur{color:var(--gold);background:rgba(227,167,47,.16);border-radius:2px;
-  padding:0 4px;margin:0 3px 0 -4px}
+  padding:0 4px;margin:0 3px 0 -4px;box-shadow:inset 0 0 0 1px rgba(227,167,47,.5)}
+.moves b.recent{background:rgba(247,247,105,.15);border-radius:2px;padding:0 4px;margin:0 3px 0 -4px}
+.moves b.older{background:rgba(247,247,105,.07);border-radius:2px;padding:0 4px;margin:0 3px 0 -4px}
 .moves .ob{color:var(--dim)}
 .moves b[data-ply]{cursor:help}
 
