@@ -17,6 +17,25 @@ const DEFAULT_POOLS = [1000,1200,1400,1600];
 const SPEEDS = "blitz,rapid,classical";
 const THIN = 300;          // total games below which the panel suggests widening
 
+/* Variety: which replies besides the main line the coach is allowed to play.
+   A move qualifies on three counts at once, because any one of them alone
+   admits junk — a move can be 30% of a position that only has six games in
+   it, or be the second most played and still be a hundredth as common as the
+   main line. Past the fourth most played there is nothing left worth calling
+   a human choice at these sample sizes. */
+const VARIETY = {
+  take:        4,     // never look past the fourth most played move
+  minShare: 0.08,     // at least this share of every game in the position
+  minRatio: 0.12,     // and not dwarfed by the main line
+  minGames:   20      // on a sample big enough to mean anything
+};
+/* On minRatio: share does nearly all the work, because the two are linked —
+   a move holding 8% of a position cannot be less than about a tenth as common
+   as the main line. It was set at 0.25 first, which quietly made the toggle
+   do nothing whenever one move led: against a 72% main line no second choice
+   can reach a quarter of it, so a reply played in one game out of eight was
+   still thrown away. It is a backstop now, not the filter. */
+
 /* ------------------------- piece set -------------------------
    The classic Cburnett vectors, inlined so the board renders with
    no network request and stays crisp at every board size. */
@@ -171,6 +190,7 @@ let sel = null, legalTargets = [], busy = false, panelOpen = true;
 let coachMode = true;  // false = free play, you move both sides
 let pending = null;       // promotion pending {from,to,color}
 let pools = [];           // selected Lichess rating buckets
+let variety = false;      // false = the coach always plays the most popular reply
 /* Review: the board shows an earlier position while `game` stays at the live
    one, so stepping back and forth costs nothing and never rewrites the game.
    reviewPly is the number of plies shown; null means we are on the live move. */
@@ -389,20 +409,33 @@ function finish(){
   $("note").innerHTML = "<b>" + msg + "</b> Start a new game whenever you like.";
 }
 
-/* Pick the opponent's move: the crowd's favourite while the book lasts, the
-   engine after. Straight argmax — the move the selected pools play most often
-   in this exact position, with no sampling and no deliberate sidelines. Which
-   move that is remains entirely a function of which pools are selected. */
+/* The replies the coach will consider: the main line always, plus any of the
+   next three that clear all of the bars above. */
+function varietySet(moves){
+  const ranked = moves.slice().sort((a,b) => gcount(b) - gcount(a));
+  const tot = ranked.reduce((s,m) => s + gcount(m), 0);
+  const top = gcount(ranked[0]);
+  return ranked.slice(0, VARIETY.take).filter((m,i) => i === 0 || (
+    gcount(m) >= VARIETY.minGames &&
+    gcount(m) >= VARIETY.minRatio * top &&
+    gcount(m) / tot >= VARIETY.minShare));
+}
+
+/* Pick the opponent's move: the crowd while the book lasts, the engine after.
+   With variety off this is a straight argmax — the move the selected pools
+   play most often in this exact position. With it on, the choice is drawn
+   from the qualifying replies in proportion to how often humans actually pick
+   them, so the main line still comes up most; it just stops being the only
+   thing that ever happens. */
 function chooseMove(data){
   const pool = data && data.moves ? data.moves : [];
-  if (pool.length){
-    outOfBook = false;
-    let best = pool[0];
-    for (const m of pool) if (gcount(m) > gcount(best)) best = m;
-    return best.san;
-  }
-  outOfBook = true;
-  return engineMove(engineCfg());
+  if (!pool.length){ outOfBook = true; return engineMove(engineCfg()); }
+  outOfBook = false;
+  const keep = varietySet(pool);
+  if (!variety || keep.length === 1) return keep[0].san;
+  let x = Math.random() * keep.reduce((s,m) => s + gcount(m), 0);
+  for (const m of keep){ x -= gcount(m); if (x <= 0) return m.san; }
+  return keep[0].san;
 }
 /* Out of book there is no crowd left to copy, so the fallback engine is
    matched to the pools instead: low buckets get a shallow search that settles
@@ -515,11 +548,14 @@ function renderCands(){
     lg.hidden = true; return;
   }
   const max = gcount(moves[0]);
+  /* with variety on, show which replies the coach is actually drawing from */
+  const inPlay = variety ? new Set(varietySet(moves).map(m => m.san)) : null;
   el.innerHTML = "";
   moves.slice(0, 7).forEach(m => {
     const n = gcount(m), pct = 100*n/tot;
     const row = document.createElement("div");
-    row.className = "mv";
+    row.className = "mv" + (inPlay && inPlay.has(m.san) ? " inplay" : "");
+    if (inPlay && inPlay.has(m.san)) row.title = "The coach may play this";
     const w = 100*(m.white||0)/n, d = 100*(m.draws||0)/n, b = 100*(m.black||0)/n;
     row.innerHTML =
       '<div class="top"><span class="san">' + m.san + '</span>' +
@@ -643,20 +679,66 @@ function placeTip(el){
   tipEl.style.left = Math.max(8, x) + "px";
   tipEl.style.top = y + "px";
 }
-/* Hover shows it; a tap pins it, since a touchscreen has no hover to rest in.
-   A pinned tip ignores mouseout and is dismissed by tapping the move again or
-   anywhere off the list. */
-let tipPly = null, tipPinned = false;
+/* What the bar is showing, in words and numbers, for the live position. */
+function evalTipHtml(){
+  const n = game.history().length, h = game.history();
+  const head = '<div class="t-head"><span class="t-san">'
+    + (n ? "After " + Math.ceil(n/2) + (n % 2 ? "." : "…") + h[n-1] : "Starting position")
+    + '</span><span class="t-rate">Position</span></div>';
+  const e = evalByPly[n];
+  if (!e) return head + '<div class="t-note">Still evaluating…</div>';
+
+  const rows = [];
+  let note = "";
+  if (e.over === "checkmate") rows.push(["Result", "checkmate"]);
+  else if (e.over === "draw") rows.push(["Result", "drawn"]);
+  else {
+    const lead = Math.abs(e.white) < 20 ? "level"
+      : (e.white > 0 ? "White" : "Black") + " better";
+    rows.push(["Evaluation", evalText(e) + "  ·  " + lead]);
+    rows.push(["To move", game.turn() === "w" ? "White" : "Black"]);
+    rows.push(["Replies that hold", (e.capped ? RES_FULL + "+" : e.res.toFixed(1)) + " of " + RES_FULL]);
+    rows.push(["Legal moves", String(e.legal)]);
+    if (!e.capped && e.res < 2)
+      note = "The bar is drawn thin because that assessment rests on very few moves.";
+  }
+  if (book && book.moves && book.moves.length){
+    const ms = book.moves.slice().sort((a,b) => gcount(b) - gcount(a));
+    const tot = ms.reduce((s,m) => s + gcount(m), 0);
+    rows.push(["Games in " + poolLabel(), fmt(tot)]);
+    rows.push(["Crowd plays", ms[0].san + "  " + Math.round(100 * gcount(ms[0]) / tot) + "%"]);
+  } else if (apiDown) rows.push(["Database", "unavailable"]);
+  else rows.push(["Database", "no games here"]);
+
+  return head
+    + rows.map(x => '<div class="t-row"><span>' + x[0] + '</span><span>' + x[1] + '</span></div>').join("")
+    + (note ? '<div class="t-note">' + note + '</div>' : "");
+}
+
+/* Hover shows a tip; a tap pins it, since a touchscreen has no hover to rest
+   in. A pinned tip ignores mouseout and is dismissed by tapping its source
+   again or anywhere else. One panel serves both the move list and the bar. */
+let tipPly = null, tipEval = false, tipPinned = false;
+function openTip(anchor, html, pin){
+  if (!html) return;
+  tipEl.innerHTML = html;
+  tipEl.hidden = false;
+  tipPinned = !!pin;
+  placeTip(anchor);                             // measured only once it is laid out
+}
 function showTip(el, pin){
   const n = +el.dataset.ply;
   const html = tipHtml(n);
   if (!html) return;
-  tipEl.innerHTML = html;
-  tipEl.hidden = false;
-  tipPly = n; tipPinned = !!pin;
-  placeTip(el);                                 // measured only once it is laid out
+  tipPly = n; tipEval = false;
+  openTip(el, html, pin);
 }
-function hideTip(){ tipEl.hidden = true; tipPly = null; tipPinned = false; }
+function showEvalTip(pin){
+  tipPly = null; tipEval = true;
+  openTip($("evalbar"), evalTipHtml(), pin);
+}
+function hideTip(){ tipEl.hidden = true; tipPly = null; tipEval = false; tipPinned = false; }
+
 $("moves").addEventListener("mouseover", e => {
   const b = e.target.closest("b[data-ply]");
   if (b && !tipPinned) showTip(b, false);
@@ -670,8 +752,15 @@ $("moves").addEventListener("click", e => {
   if (tipPinned && tipPly === +b.dataset.ply) hideTip();
   else showTip(b, true);
 });
+$("evalbar").addEventListener("mouseover", () => { if (!tipPinned) showEvalTip(false); });
+$("evalbar").addEventListener("mouseout", () => { if (!tipPinned) hideTip(); });
+$("evalbar").addEventListener("click", () => {
+  if (tipPinned && tipEval) hideTip(); else showEvalTip(true);
+});
+$("evalbar").addEventListener("focus", () => showEvalTip(false));
+$("evalbar").addEventListener("blur", () => { if (!tipPinned) hideTip(); });
 document.addEventListener("click", e => {
-  if (tipPinned && !e.target.closest("#moves")) hideTip();
+  if (tipPinned && !e.target.closest("#moves, #evalbar")) hideTip();
 });
 $("moves").addEventListener("scroll", hideTip);
 window.addEventListener("blur", hideTip);
@@ -850,8 +939,20 @@ function paintEval(pct, label, thinSide, thick, thinking){
   $("evaltxt").textContent = label;
   $("evalbar").classList.toggle("think", !!thinking);
 }
-/* centipawns → share of the bar, squashed so ±3 pawns already looks decisive */
-function cpToPct(cp){ return 100 / (1 + Math.exp(-cp/350)); }
+/* Centipawns → share of the bar. A plain sigmoid spends almost none of its
+   travel where games are actually decided: at 1/(1+e^(-cp/350)) a half-pawn
+   edge moved the boundary 3.6% off centre, which is invisible. So the first
+   pawn gets a straight run of 18% of the bar each way — a quarter-pawn is
+   already 4.5% off centre, readable against the centre tick — and everything
+   past it is compressed into the remaining 32%, still approaching the ends
+   without ever reaching them. Mate is drawn separately at the extremes. */
+function cpToPct(cp){
+  const s = Math.sign(cp), a = Math.abs(cp);
+  const frac = a <= 100
+    ? 0.18 * (a / 100)
+    : 0.18 + 0.32 * (1 - Math.exp(-(a - 100) / 420));
+  return 50 + s * frac * 100;
+}
 function cpLabel(cp){
   const p = cp/100;
   return (p >= 0 ? "+" : "-") + Math.abs(p).toFixed(Math.abs(p) >= 10 ? 0 : 1);
@@ -865,7 +966,6 @@ async function updateEval(){
   if (g.game_over()){
     if (g.in_checkmate()) paintEval(g.turn() === "w" ? 0 : 100, g.turn() === "w" ? "0–1" : "1–0", null, 1);
     else paintEval(50, "½–½", null, 1);
-    $("evalbar").title = "The game is over.";
     /* a mated side is worth -99000 to itself; a draw is worth nothing to
        either, which is what makes stalemating a won position score as the
        blunder it is */
@@ -943,12 +1043,6 @@ async function updateEval(){
      best reply — kept to spot a plain recapture when rating the move before */
   recordEval(ply, {best, white, res: resilience, legal: ms.length, capped, over: null,
                    bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || ""))});
-
-  const mover = g.turn() === "w" ? "White" : "Black";
-  $("evalbar").title = "Engine evaluation from White's point of view: " + label
-    + " — " + mover + " has " + (capped ? RES_FULL + " or more moves" : resilience.toFixed(1)
-      + " move" + (resilience >= 1.95 ? "s" : "")) + " that hold the position"
-    + (thinSide ? ". The thin bar means that advantage rests on very few moves." : ".");
 }
 
 /* ============================ pools ============================
@@ -1002,6 +1096,8 @@ function widenPool(){
 function recordEval(ply, data){
   evalByPly[ply] = data;
   renderMoves();
+  /* a tip open on the bar was showing "still evaluating"; fill it in */
+  if (tipEval && !tipEl.hidden) showEvalTip(tipPinned);
 }
 /* verbose history is rebuilt move by move inside chess.js, so it is cached
    rather than asked for once per ply per render */
@@ -1089,6 +1185,12 @@ function setCoach(v){
   if (!busy && reviewPly === null && !game.game_over() && game.turn() !== userColor) step();
 }
 $("coach").onclick = () => setCoach(!coachMode);
+$("vary").onclick = () => {
+  variety = !variety;
+  $("vary").classList.toggle("on", variety);
+  $("vary").textContent = variety ? "Variety: On" : "Variety: Off";
+  renderCands();                    // the in-play marks appear or clear with it
+};
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);

@@ -24,7 +24,7 @@
         <div class="promo" id="promo"></div>
       </div>
 
-      <div class="evalbar" id="evalbar" title="Engine evaluation, from White's point of view">
+      <div class="evalbar" id="evalbar" tabindex="0" aria-label="Engine evaluation, from White's point of view">
         <i class="w" id="evalw"></i>
         <i class="b" id="evalb"></i>
         <span class="val" id="evaltxt">0.0</span>
@@ -52,6 +52,7 @@
         <button type="button" id="next" class="nav" aria-label="Next move" title="Step forward through the game (→)">▶</button>
         <button type="button" id="flip">Flip</button>
         <button type="button" id="coach" class="on" title="C — when off, you move both sides">Coach: On</button>
+        <button type="button" id="vary" title="Off, the coach always plays the most popular reply. On, it varies between the replies that are genuinely popular.">Variety: Off</button>
         <button type="button" id="peek" title="Collapse the whole right-hand panel">Hide panel</button>
         <button type="button" id="pgn">Copy PGN</button>
         <button type="button" id="retry">Retry database</button>

@@ -112,14 +112,18 @@ h1 em{font-style:italic;color:var(--gold)}
    The trough sits mid-tone so a thinned segment stays legible whether it is
    the light one or the dark one. */
 .evalbar{position:relative;margin-top:10px;height:26px;background:#46545f;
-  border:1px solid var(--line);border-radius:3px;overflow:hidden}
+  border:1px solid var(--line);border-radius:3px;overflow:hidden;cursor:help}
 .evalbar i{position:absolute;top:50%;height:100%;transform:translateY(-50%);
   transition:width .45s ease,height .45s ease}
 .evalbar .w{left:0;background:#eef1f2}
 .evalbar .b{right:0;background:#1b242d}
+/* Centre tick. A boundary a few percent off centre is only readable against a
+   reference, so the bar draws one — above the fills, below the label. */
+.evalbar::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;
+  margin-left:-.5px;background:rgba(227,167,47,.85);z-index:1}
 .evalbar .val{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   background:rgba(20,27,36,.86);color:var(--text);border-radius:2px;
-  padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap}
+  padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap;z-index:2}
 .evalbar.think .val{color:var(--dim)}
 
 /* controls */
@@ -160,6 +164,8 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 .mv{display:block;width:100%;text-align:left;background:none;border:0;border-radius:2px;
   padding:6px 5px;margin:0 -5px;cursor:default}
 .mv+.mv{border-top:1px solid rgba(49,64,79,.6)}
+/* replies the coach is drawing from, when variety is on */
+.mv.inplay{box-shadow:inset 2px 0 0 rgba(227,167,47,.8)}
 .mv .top{display:flex;align-items:baseline;gap:8px}
 .mv .san{font-size:14.5px;min-width:52px}
 .mv .pct{font-size:13px;color:var(--gold);min-width:44px;text-align:right}
