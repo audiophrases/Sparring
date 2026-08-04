@@ -412,15 +412,15 @@ function returnToMain(){
 /* Moves are read from whatever position is on the board. While reviewing that
    is an earlier one, and playing there branches the game from it — so two
    steps back and a different move is the take-back, without a button for it. */
+/* Whichever side is to move in the position on the board can be moved — there
+   is no rule to explain because there is no restriction. Playing the coach's
+   side asks "what if it had gone this way instead", and since the coach only
+   answers when its own colour is to move, it picks its side straight back up
+   on the next ply. The board is the whole interface: a piece you can pick up
+   is a piece you can move. */
 function onSquare(i){
   const view = reviewGame || game;
   if (busy || view.game_over()) return;
-  if (coachMode && view.turn() !== userColor){
-    /* the one hint worth giving, and only when a click asks for it */
-    if (reviewPly !== null) $("note").innerHTML =
-      'The coach moved here — step to one of <b>your</b> turns to try a different move.';
-    return;
-  }
   const name = sqName(i);
   if (sel && legalTargets.includes(name)){
     const opts = view.moves({square: sel, verbose: true}).filter(m => m.to === name);
@@ -525,7 +525,7 @@ function finish(){
   else if (game.in_threefold_repetition()) msg = "Draw by repetition.";
   else if (game.insufficient_material()) msg = "Draw — not enough material.";
   else msg = "Draw by the fifty-move rule.";
-  $("note").innerHTML = "<b>" + msg + "</b> Start a new game whenever you like.";
+  $("note").innerHTML = "<b>" + msg + "</b>";   // the result, not advice about it
 }
 
 /* The replies the coach will consider: the main line always, plus any of the
@@ -1334,12 +1334,11 @@ function setCoach(v){
   $("coach").classList.toggle("on", coachMode);
   $("coach").textContent = coachMode ? "Coach: On" : "Coach: Off";
   sel = null; legalTargets = []; draw();
-  if (!coachMode){
-    $("note").innerHTML = '<b>Free play.</b> You move both sides; the database keeps following along.';
-    return;
-  }
-  $("note").textContent = "";
-  if (!busy && reviewPly === null && !game.game_over() && game.turn() !== userColor) step();
+  /* the button already says which it is; the line under the board goes back to
+     describing the position, which is all it ever does now */
+  if (!game.game_over()) reportViewedMove();
+  if (coachMode && !busy && reviewPly === null && !game.game_over()
+      && game.turn() !== userColor) step();
 }
 $("coach").onclick = () => setCoach(!coachMode);
 $("vary").onclick = () => {
