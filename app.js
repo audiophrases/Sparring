@@ -11,8 +11,28 @@ const FILES = "abcdefgh";
    difficulty control: the pools you pick are the crowd the coach copies, and
    the coach plays whatever that crowd plays most in the position in front of
    it. Widening the selection buys coverage in a rare line at the cost of a
-   looser opponent. */
-const BUCKETS = [1000,1200,1400,1600,1800,2000,2200,2500];
+   looser opponent.
+
+   A bucket is the FLOOR OF A BAND, and the band is keyed on the average of
+   the two players' ratings — not either player's own. So 1400 means "games
+   where the pair averaged 1400 to 1599", not "games by 1400 players".
+
+   The explorer takes the number, parses it, and snaps it to whichever band
+   contains it (RatingGroup::from_str -> select_avg), so it accepts anything
+   and there is no such thing as an invalid value — only values that collapse
+   onto a band you already have. Everything below 1000 is one single band, so
+   600 and 800 would both land on it; it is offered once here as "<1000".
+   At the top, select_avg has no branch that returns the 2800 group: every
+   average of 2800 or more falls through to the last one. So 2800 and 3200
+   are the same band too, and it is offered once as "2800+". */
+const BUCKETS = [0,1000,1200,1400,1600,1800,2000,2200,2500,2800];
+const bandTop  = v => BUCKETS[BUCKETS.indexOf(v) + 1] || null;   // null = open ended
+const bandLabel = v => v === 0 ? "<1000" : bandTop(v) ? String(v) : v + "+";
+const bandRange = v => {
+  const t = bandTop(v);
+  return t ? v + "–" + (t - 1) : v + " and up";
+};
+const bandMid = v => { const t = bandTop(v); return t ? (v + t) / 2 : v + 200; };
 const DEFAULT_POOLS = [1000,1200,1400,1600];
 const SPEEDS = "blitz,rapid,classical";
 const THIN = 300;          // total games below which the panel suggests widening
@@ -441,7 +461,7 @@ function chooseMove(data){
    matched to the pools instead: low buckets get a shallow search that settles
    for any near-best move, high ones get the full three plies. */
 function engineCfg(){
-  const mean = pools.reduce((a,b) => a + b, 0) / pools.length;
+  const mean = pools.reduce((a,v) => a + bandMid(v), 0) / pools.length;
   if (mean < 1500) return {depth:1, wild:0.18};
   if (mean < 2000) return {depth:2, wild:0.05};
   return {depth:3, wild:0};
@@ -1051,11 +1071,15 @@ async function updateEval(){
    carries the pools, so flipping back to a set you have already read costs
    no request. */
 function poolParam(){ return pools.join(","); }
+/* The rating range actually covered, not the list of floors: picking 1000
+   through 1600 reaches games averaging up to 1799, and saying "1000–1600"
+   would understate it by a whole band. */
 function poolLabel(){
-  if (pools.length === 1) return String(pools[0]);
   const idx = pools.map(v => BUCKETS.indexOf(v));
   const run = idx.every((v,i) => i === 0 || v === idx[i-1] + 1);
-  return run ? pools[0] + "–" + pools[pools.length-1] : pools.join(" / ");
+  if (!run) return pools.map(bandLabel).join(" / ");
+  const top = bandTop(pools[pools.length - 1]);
+  return top ? pools[0] + "–" + (top - 1) : pools[0] + "+";
 }
 function renderChips(){
   const box = $("chips");
@@ -1064,8 +1088,8 @@ function renderChips(){
     const b = document.createElement("button");
     b.type = "button";
     b.className = "chip" + (pools.includes(v) ? " on" : "");
-    b.textContent = v;
-    b.title = "Lichess " + v + " pool";
+    b.textContent = bandLabel(v);
+    b.title = "Games whose two players averaged " + bandRange(v);
     b.setAttribute("aria-pressed", String(pools.includes(v)));
     b.onclick = () => setPools(pools.includes(v) ? pools.filter(x => x !== v) : pools.concat(v));
     box.appendChild(b);
