@@ -201,7 +201,9 @@ const LOCAL_ECO = {
 
 /* ============================ state ============================ */
 let game = new Chess();
-let orientation = "w";
+/* Your side and the side the board is drawn from are the same fact: the
+   colour at the bottom is the one you play, and the coach has the other.
+   Flipping is therefore not a view setting — it hands your side over. */
 let userColor = "w";
 
 let book = null;          // explorer payload for the current position
@@ -257,7 +259,7 @@ if (window.ResizeObserver) new ResizeObserver(sizeBoard).observe(boardCol);
 
 function sqName(i){
   let r = Math.floor(i/8), f = i%8;
-  if (orientation === "b"){ r = 7-r; f = 7-f; }
+  if (userColor === "b"){ r = 7-r; f = 7-f; }
   return FILES[f] + (8-r);
 }
 function draw(){
@@ -482,6 +484,9 @@ async function step(){
   if (!coachMode || game.turn() === userColor){ busy = false; return; }
   await sleep(260);
   if (stale()) return;
+  /* asked again on the way out: F swaps sides, and a reply that was the
+     coach's to make when it started thinking may be yours to make now */
+  if (!coachMode || game.turn() === userColor){ busy = false; return; }
   const mv = chooseMove(data);
   game.move(mv);
   exitReview();          // the reply is the point — snap back to it
@@ -1289,9 +1294,20 @@ function rateMove(n){                        // n = 1-based ply
 /* ============================ controls ============================ */
 $("widen").onclick = widenPool;
 $("poolreset").onclick = () => setPools(DEFAULT_POOLS);
-$("side").onchange = () => { userColor = $("side").value; orientation = userColor; newGame(); };
 $("newg").onclick = newGame;
-$("flip").onclick = () => { orientation = orientation === "w" ? "b" : "w"; draw(); };
+
+/* Flipping turns the board round and swaps sides with it: the colour you were
+   playing is the coach's now, and it answers straight away if that side is to
+   move. Mid-game is a fair moment to do it — the position is untouched, and
+   taking over the side you have been playing against is the whole point. */
+function flip(){
+  userColor = userColor === "w" ? "b" : "w";
+  sel = null; legalTargets = []; draw();
+  /* "you won" and "you lost" swap with the sides */
+  if (game.game_over()){ finish(); return; }
+  if (coachMode && !busy && reviewPly === null && game.turn() !== userColor) step();
+}
+$("flip").onclick = flip;
 
 /* The right-hand panel collapses whole — candidates, move list and all. Its
    own Hide button goes with it, so the toolbar button is the way back, and
@@ -1336,8 +1352,8 @@ function syncNav(){
   $("next").disabled = reviewPly === null;
 }
 
-/* keyboard: arrows review the game, C toggles the coach. Ignored while a
-   control has focus, so arrowing through the level select still works. */
+/* keyboard: arrows review the game, C toggles the coach, F swaps sides.
+   Ignored while a text control has focus, so typing never moves the board. */
 document.addEventListener("keydown", e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
@@ -1350,6 +1366,7 @@ document.addEventListener("keydown", e => {
     case "Home":       e.preventDefault(); gotoPly(0); break;
     case "End":        e.preventDefault(); gotoPly(n); break;
     case "c": case "C": e.preventDefault(); setCoach(!coachMode); break;
+    case "f": case "F": e.preventDefault(); flip(); break;
   }
 });
 $("pgn").onclick = () => {

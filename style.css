@@ -141,11 +141,11 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 
 /* controls */
 .ctl{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
-button,select{font-family:var(--mono);font-size:12.5px;color:var(--text);
+button{font-family:var(--mono);font-size:12.5px;color:var(--text);
   background:var(--panel);border:1px solid var(--line);border-radius:3px;
   padding:7px 10px;cursor:pointer}
-button:hover,select:hover{background:var(--panel-2);border-color:var(--gold-dim)}
-button:focus-visible,select:focus-visible,.sq:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+button:hover{background:var(--panel-2);border-color:var(--gold-dim)}
+button:focus-visible,.sq:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 button.on{border-color:var(--gold);color:var(--gold)}
 button:disabled{opacity:.38;cursor:default}
 button:disabled:hover{background:var(--panel);border-color:var(--line)}
