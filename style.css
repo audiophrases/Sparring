@@ -20,8 +20,11 @@
   /* classic green & cream board */
   --sq-light:#ebecd0;
   --sq-dark:#779556;
-  --hl:rgba(247,247,105,.52);      /* last move */
-  --hl-prev:rgba(247,247,105,.24);   /* the half-move before it */
+  --hl:rgba(247,247,105,.52);        /* last move — a solid wash */
+  --hl-prev:rgba(247,247,105,.30);   /* the half-move before it — wash… */
+  --hl-prev-line:rgba(227,167,47,.9);/* …inside a frame, the page gold, which
+                                        holds its own on a green square */
+  --hl-prev-w:calc(var(--sq) * .06); /* frame width, scaled with the board */
   --hl-strong:rgba(247,247,105,.72); /* selected piece */
 
   --board:480px;                   /* replaced at runtime; multiple of 8 */
@@ -90,11 +93,19 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 
 /* highlights sit under the piece: ::before, not ::after.
    prev comes first so that a square belonging to both halves of the exchange
-   is painted at full strength — same specificity, later rule wins. */
-.sq.prev::before{content:"";position:absolute;inset:0;background:var(--hl-prev)}
-.sq.last::before{content:"";position:absolute;inset:0;background:var(--hl)}
-.sq.sel::before{content:"";position:absolute;inset:0;background:var(--hl-strong)}
-.sq.chk::before{content:"";position:absolute;inset:0;
+   is painted at full strength — same specificity, later rule wins. The two
+   halves are told apart by shape rather than by opacity alone: the move just
+   played is a plain wash, the one before it is a fainter wash held in a gold
+   frame. A frame survives on the dark squares, where a fainter yellow could
+   only vanish, and it stays the older move at a glance because the square
+   under it is still the quieter of the two.
+   The later rules blank the frame, so a square carried over from the earlier
+   half — a recapture, a piece stepping back — shows as one thing, not two. */
+.sq.prev::before{content:"";position:absolute;inset:0;background:var(--hl-prev);
+  box-shadow:inset 0 0 0 var(--hl-prev-w) var(--hl-prev-line)}
+.sq.last::before{content:"";position:absolute;inset:0;background:var(--hl);box-shadow:none}
+.sq.sel::before{content:"";position:absolute;inset:0;background:var(--hl-strong);box-shadow:none}
+.sq.chk::before{content:"";position:absolute;inset:0;box-shadow:none;
   background:radial-gradient(circle,rgba(214,72,60,.9),rgba(214,72,60,0) 72%)}
 .dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:28%;height:28%;border-radius:50%;background:rgba(20,27,36,.22)}
