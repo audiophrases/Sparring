@@ -20,11 +20,11 @@
   /* classic green & cream board */
   --sq-light:#ebecd0;
   --sq-dark:#779556;
-  --hl:rgba(247,247,105,.52);        /* last move — a solid wash */
-  --hl-prev:rgba(247,247,105,.30);   /* the half-move before it — wash… */
-  --hl-prev-line:rgba(227,167,47,.9);/* …inside a frame, the page gold, which
+  --hl:rgba(247,247,105,.52);        /* last move — wash… */
+  --hl-line:rgba(227,167,47,.92);    /* …inside a frame, the page gold, which
                                         holds its own on a green square */
-  --hl-prev-w:calc(var(--sq) * .06); /* frame width, scaled with the board */
+  --hl-w:calc(var(--sq) * .06);      /* frame width, scaled with the board */
+  --hl-prev:rgba(247,247,105,.40);   /* the half-move before it — wash alone */
   --hl-strong:rgba(247,247,105,.72); /* selected piece */
 
   --board:480px;                   /* replaced at runtime; multiple of 8 */
@@ -94,16 +94,15 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 /* highlights sit under the piece: ::before, not ::after.
    prev comes first so that a square belonging to both halves of the exchange
    is painted at full strength — same specificity, later rule wins. The two
-   halves are told apart by shape rather than by opacity alone: the move just
-   played is a plain wash, the one before it is a fainter wash held in a gold
-   frame. A frame survives on the dark squares, where a fainter yellow could
-   only vanish, and it stays the older move at a glance because the square
-   under it is still the quieter of the two.
-   The later rules blank the frame, so a square carried over from the earlier
-   half — a recapture, a piece stepping back — shows as one thing, not two. */
-.sq.prev::before{content:"";position:absolute;inset:0;background:var(--hl-prev);
-  box-shadow:inset 0 0 0 var(--hl-prev-w) var(--hl-prev-line)}
-.sq.last::before{content:"";position:absolute;inset:0;background:var(--hl);box-shadow:none}
+   halves are told apart by shape rather than by opacity alone: both are lit
+   well enough to survive on a green square, and the gold frame is what marks
+   the move just played. The frame belongs to the newer half — the loudest
+   mark on the board should be the move you are answering.
+   The later rules blank the frame, so a square that is also the selected one
+   or the checked king shows as one thing, not two. */
+.sq.prev::before{content:"";position:absolute;inset:0;background:var(--hl-prev)}
+.sq.last::before{content:"";position:absolute;inset:0;background:var(--hl);
+  box-shadow:inset 0 0 0 var(--hl-w) var(--hl-line)}
 .sq.sel::before{content:"";position:absolute;inset:0;background:var(--hl-strong);box-shadow:none}
 .sq.chk::before{content:"";position:absolute;inset:0;box-shadow:none;
   background:radial-gradient(circle,rgba(214,72,60,.9),rgba(214,72,60,0) 72%)}
