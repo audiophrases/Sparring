@@ -101,16 +101,6 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 .ring{position:absolute;inset:0;border-radius:50%;
   border:calc(var(--sq) * .085) solid rgba(20,27,36,.22)}
 
-/* branch confirmation — sits directly under the board, where the eye already is */
-.confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
-  gap:8px;margin-top:10px;padding:9px 11px;font-size:11.5px;color:var(--dim);
-  background:var(--panel);border:1px solid var(--gold-dim);border-left:3px solid var(--gold);
-  border-radius:3px}
-.confirm b{color:var(--text);font-weight:400}
-.confirmbtns{display:flex;gap:6px;flex-shrink:0}
-.danger{border-color:#8a3128;color:#e0796d}
-.danger:hover{background:#3a1f1c;border-color:#d6483c}
-
 /* ribbon — the signature element */
 .ribbon{margin-top:12px;background:var(--panel);border:1px solid var(--line);
   border-left:3px solid var(--gold);border-radius:3px;padding:12px 14px;
@@ -211,6 +201,9 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 .moves b.older{background:rgba(247,247,105,.07);border-radius:2px;padding:0 4px;margin:0 3px 0 -4px}
 .moves .ob{color:var(--dim)}
 .moves b[data-ply]{cursor:help}
+/* sandbox moves: present, but plainly not the game you were playing */
+.moves b.var{font-style:italic;color:var(--dim)}
+.moves b.var.cur,.moves b.var.recent{color:var(--text)}
 
 /* move marks: only the notable ones are drawn, so a clean game stays clean */
 .moves b i{font-style:normal;font-size:11px;margin-left:1px;vertical-align:.08em}
