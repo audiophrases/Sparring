@@ -46,6 +46,9 @@ header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;
   border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:16px}
 h1{font-family:var(--serif);font-size:23px;font-weight:400;letter-spacing:.01em}
 h1 em{font-style:italic;color:var(--gold)}
+/* the article is part of the name but not part of the emphasis — sized in em so
+   it keeps its proportion if the heading ever changes size */
+h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 .tag{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 
 /* layout */
