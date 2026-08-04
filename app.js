@@ -214,7 +214,7 @@ let variety = false;      // false = the coach always plays the most popular rep
 /* Review: the board shows an earlier position while `game` stays at the live
    one, so stepping back and forth costs nothing and never rewrites the game.
    reviewPly is the number of plies shown; null means we are on the live move. */
-let reviewPly = null, reviewGame = null, savedNote = null;
+let reviewPly = null, reviewGame = null;
 let apiDown = false;
 let token = "";
 try { token = localStorage.getItem("lichessToken") || ""; } catch(e){}
@@ -309,33 +309,51 @@ function gotoPly(n){
   n = Math.max(0, Math.min(h.length, n));
   if (n === h.length){
     if (exitReview()){
-      draw(); renderMoves(); syncEvalBar();
+      draw(); renderMoves(); syncEvalBar(); renderRibbon(); renderCands(); reportViewedMove();
       /* rejoining is the only moment a coach turn left waiting — from toggling
          the coach on mid-review — can be handed back to it */
       if (coachMode && !busy && !game.game_over() && game.turn() !== userColor) step();
     }
     return;
   }
-  if (reviewPly === null) savedNote = $("note").innerHTML;   // to restore on the way out
   const g = new Chess();
   for (let i = 0; i < n; i++) g.move(h[i].san);
   reviewPly = n; reviewGame = g;
   sel = null; legalTargets = [];
-  draw(); renderMoves(); syncEvalBar();
-  const where = n
-    ? "after " + Math.ceil(n/2) + (n % 2 ? "." : "…") + h[n-1].san
-    : "at the starting position";
-  /* a move can only be branched off where it is your turn, so say which it is */
-  const yours = !coachMode || g.turn() === userColor;
-  $("note").innerHTML = '<b>Reviewing</b> — ' + where + '. ' + (yours
-    ? '<span class="hot">Make a move to play from here</span>, or → to step forward.'
-    : '<span class="hot">→</span> to step forward, End to rejoin the game.');
+  /* no announcement — every panel simply describes the position now shown */
+  draw(); renderMoves(); syncEvalBar(); renderRibbon(); renderCands(); reportViewedMove();
+  ensureViewBook();
 }
 function exitReview(){
   if (reviewPly === null) return false;
-  reviewPly = null; reviewGame = null;
-  if (savedNote !== null){ $("note").innerHTML = savedNote; savedNote = null; }
+  reviewPly = null; reviewGame = null; viewPending = false;
   return true;
+}
+
+/* ---------------- the panels follow the board ----------------
+   Whatever position is on show, the candidates panel, ribbon, bar and
+   tooltip all describe it. Positions the game has passed through are in
+   the explorer cache already, so stepping through them is instant; any
+   other position is fetched quietly once the stepping settles. */
+let viewSeq = 0, viewPending = false;
+function displayBook(){
+  if (reviewPly === null || !reviewGame) return book;
+  return cache.get(reviewGame.fen() + "|" + poolParam()) || null;
+}
+async function ensureViewBook(){
+  const mine = ++viewSeq;
+  viewPending = false;
+  if (reviewPly === null || apiDown) return;
+  const fen = reviewGame.fen();
+  if (cache.has(fen + "|" + poolParam())) return;
+  const fresh = () => mine === viewSeq && reviewPly !== null && reviewGame.fen() === fen;
+  viewPending = true;
+  await sleep(250);                    // let a run of arrow presses settle
+  if (!fresh()) return;
+  await getBook(fen);
+  if (!fresh()){ return; }
+  viewPending = false;
+  renderCands();
 }
 /* ===================== variations =====================
    Playing from a reviewed position opens a sandbox rather than rewriting
@@ -346,18 +364,21 @@ function exitReview(){
    free: the coach answers in it, the explorer follows it, moves get rated in
    it. Coming back is the same swap in reverse, and the parked game was never
    touched, so there is nothing to restore. */
-let mainGame = null, mainEval = null;
+let mainGame = null, mainEval = null, mainOpen = null;
 let varFrom = null;              // shared plies; ply varFrom+1 onward is the variation
 
 function enterVariation(n){
-  if (varFrom === null){ mainGame = game; mainEval = evalByPly; }
+  if (varFrom === null){ mainGame = game; mainEval = evalByPly; mainOpen = openByPly; }
   /* branching again from before the split moves the split back with it */
   varFrom = varFrom === null ? n : Math.min(varFrom, n);
   const h = game.history();
   const g = new Chess();
   for (let i = 0; i < n; i++) g.move(h[i]);
   game = g;
-  evalByPly = evalByPly.slice(0, n + 1);   // slice copies, so the parked array is safe
+  /* slice copies, so the parked arrays are safe; both are per-ply records of
+     the line and have to travel together */
+  evalByPly = evalByPly.slice(0, n + 1);
+  openByPly = openByPly.slice(0, n + 1);
   evalToken++;                             // abandon any search running for the old line
   vhCache = {len:-1, list:[]};
   book = null; outOfBook = false;
@@ -367,8 +388,8 @@ function enterVariation(n){
 }
 function exitVariation(){
   if (varFrom === null) return false;
-  game = mainGame; evalByPly = mainEval;
-  mainGame = null; mainEval = null; varFrom = null;
+  game = mainGame; evalByPly = mainEval; openByPly = mainOpen;
+  mainGame = null; mainEval = null; mainOpen = null; varFrom = null;
   evalToken++;
   vhCache = {len:-1, list:[]};
   book = null; outOfBook = false;
@@ -383,9 +404,7 @@ function inVariation(n){ return varFrom !== null && n > varFrom; }
 function returnToMain(){
   if (!exitVariation()) return;
   sel = null; legalTargets = [];
-  draw(); renderMoves(); syncEvalBar(); renderRibbon();
-  $("note").innerHTML = '<b>Back in your game.</b> The variation was a sandbox — nothing here changed.';
-  savedNote = null;
+  draw(); renderMoves(); syncEvalBar(); renderRibbon(); renderCands(); reportViewedMove();
   refreshPosition();
 }
 
@@ -396,7 +415,12 @@ function returnToMain(){
 function onSquare(i){
   const view = reviewGame || game;
   if (busy || view.game_over()) return;
-  if (coachMode && view.turn() !== userColor) return;
+  if (coachMode && view.turn() !== userColor){
+    /* the one hint worth giving, and only when a click asks for it */
+    if (reviewPly !== null) $("note").innerHTML =
+      'The coach moved here — step to one of <b>your</b> turns to try a different move.';
+    return;
+  }
   const name = sqName(i);
   if (sel && legalTargets.includes(name)){
     const opts = view.moves({square: sel, verbose: true}).filter(m => m.to === name);
@@ -422,8 +446,8 @@ function showPromo(){
   });
 }
 function commit(mv){
+  const before = displayBook();        // the book for the position being played from
   if (reviewPly !== null) enterVariation(reviewPly);   // explore, do not overwrite
-  const before = book;
   const m = game.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
   if (!m) { sel = null; legalTargets = []; draw(); return; }
   sel = null; legalTargets = [];
@@ -432,26 +456,35 @@ function commit(mv){
   step();
 }
 
-/* report how popular the human's own move was */
-function reportUserMove(m, prev){
-  if (!prev || !prev.moves || !prev.moves.length){
-    $("note").innerHTML = outOfBook
-      ? '<b>' + m.san + '</b> — past the database. Both sides are on their own now.'
-      : '<b>' + m.san + '</b>';
-    return;
-  }
+/* How popular a move was, given the book of the position it was played from.
+   Used both as you play and as you step back over moves already made, so the
+   line under the board always belongs to the move that produced the position
+   on the board. */
+function describeMove(san, prev){
+  if (!prev || !prev.moves || !prev.moves.length) return '<b>' + san + '</b>';
   const tot = prev.moves.reduce((s,x) => s + gcount(x), 0);
-  const hit = prev.moves.find(x => x.san === m.san);
-  if (!hit){
-    $("note").innerHTML = '<b>' + m.san + '</b> — <span class="hot">not in the database</span> in these pools. You just left book.';
-    return;
-  }
+  const hit = prev.moves.find(x => x.san === san);
+  if (!hit) return '<b>' + san + '</b> — <span class="hot">not in the database</span> in these pools.';
   const pct = 100 * gcount(hit) / tot;
-  const rank = prev.moves.slice().sort((a,b) => gcount(b)-gcount(a)).findIndex(x => x.san === m.san) + 1;
+  const rank = prev.moves.slice().sort((a,x) => gcount(x)-gcount(a)).findIndex(x => x.san === san) + 1;
   const word = pct > 40 ? "the main choice" : pct > 15 ? "a common choice" : pct > 3 ? "a sideline" : "rare";
-  $("note").innerHTML = '<b>' + m.san + '</b> — ' + word + ': <span class="hot">' + pct.toFixed(1) +
+  return '<b>' + san + '</b> — ' + word + ': <span class="hot">' + pct.toFixed(1) +
     '%</span> of ' + poolLabel() + ' players, ' + fmt(gcount(hit)) +
     ' games (#' + rank + ' most played).';
+}
+function reportUserMove(m, prev){
+  const bare = !prev || !prev.moves || !prev.moves.length;
+  $("note").innerHTML = bare && outOfBook
+    ? '<b>' + m.san + '</b> — past the database. Both sides are on their own now.'
+    : describeMove(m.san, prev);
+}
+/* the same line, for whichever move led to the position now on the board */
+function reportViewedMove(){
+  const n = viewedPly(), h = game.history();
+  if (!n){ $("note").textContent = ""; return; }
+  const rec = openByPly[n-1];
+  const prev = rec && rec.fen ? cache.get(rec.fen + "|" + poolParam()) : null;
+  $("note").innerHTML = describeMove(h[n-1], prev);
 }
 
 /* ============================ turn loop ============================ */
@@ -598,36 +631,49 @@ function absorbOpening(data){
     }
   }
   outOfBook = !(data && data.moves && data.moves.length);
+  /* every position the game reaches keeps its opening line, so the ribbon
+     can describe whichever ply is being viewed later */
+  openByPly[hist.length] = {name: lastName, eco: lastEco, namedAt: bookPlies,
+                            out: outOfBook, fen: game.fen()};
 }
 
 /* ============================ rendering ============================ */
 function renderRibbon(){
   const rb = $("ribbon");
-  $("depth").textContent = varFrom !== null ? "variation" : outOfBook ? "out of book" : "";
-  if (!lastName){
+  const n = viewedPly();
+  /* the deepest record at or before the viewed ply names this position */
+  let rec = null;
+  for (let i = Math.min(n, openByPly.length - 1); i >= 0; i--){
+    if (openByPly[i]){ rec = openByPly[i]; break; }
+  }
+  $("depth").textContent = varFrom !== null ? "variation"
+    : (rec && rec.out) ? "out of book" : "";
+  if (!rec || !rec.name){
     $("eco").textContent = "Opening"; $("oname").textContent = "Starting position";
-    $("osub").textContent = "Make a move to begin."; rb.classList.remove("off");
+    $("osub").textContent = n ? "No named line yet." : "Make a move to begin.";
+    rb.classList.remove("off");
     return;
   }
-  $("eco").textContent = (lastEco ? lastEco + " · " : "") + (outOfBook ? "last named line" : "in book");
-  $("oname").textContent = lastName;
-  const ply = game.history().length;
-  $("osub").textContent = outOfBook
-    ? "Out of book after " + Math.ceil(bookPlies/2) + " moves — from here your opponent calculates instead of recalling."
-    : "Named at move " + Math.ceil(bookPlies/2) + " · " + Math.ceil(ply/2) + " played";
-  rb.classList.toggle("off", outOfBook);
-  $("depth").textContent = varFrom !== null ? "variation" : outOfBook ? "out of book" : "";
+  $("eco").textContent = (rec.eco ? rec.eco + " · " : "") + (rec.out ? "last named line" : "in book");
+  $("oname").textContent = rec.name;
+  $("osub").textContent = rec.out
+    ? "Out of book after " + Math.ceil(rec.namedAt/2) + " moves — from here your opponent calculates instead of recalling."
+    : "Named at move " + Math.ceil(rec.namedAt/2) + " · " + Math.ceil(n/2) + " played";
+  rb.classList.toggle("off", rec.out);
 }
 function renderCands(){
   const el = $("cands"), lg = $("legend");
-  const has = !!(book && book.moves && book.moves.length);
-  const moves = has ? book.moves.slice().sort((a,b) => gcount(b) - gcount(a)) : [];
+  const bk = displayBook();            // the book for the position on the board
+  const has = !!(bk && bk.moves && bk.moves.length);
+  const moves = has ? bk.moves.slice().sort((a,x) => gcount(x) - gcount(a)) : [];
   const tot = moves.reduce((s,m) => s + gcount(m), 0);
   /* the game count stays on the header even when the rows are hidden — it is
      what tells you the pool has run thin, and it gives nothing away */
   $("poptot").textContent = has ? fmt(tot) + " games" : "";
   if (!panelOpen){ lg.hidden = true; return; }
-  if (busy && !book){ el.textContent = "Reading the database…"; lg.hidden = true; return; }
+  /* "no games here" is a claim; only make it once the lookup has actually run */
+  const loading = reviewPly === null ? (busy && !bk) : viewPending;
+  if (!has && loading){ el.textContent = "Reading the database…"; lg.hidden = true; return; }
   if (!has){
     el.innerHTML = '<span class="ob">' + (apiDown ? "Database unavailable."
       : "No human games reach this position in the selected pools. You are both improvising.") + '</span>';
@@ -767,9 +813,9 @@ function placeTip(el){
   tipEl.style.left = Math.max(8, x) + "px";
   tipEl.style.top = y + "px";
 }
-/* What the bar is showing, in words and numbers, for the live position. */
+/* What the bar is showing, in words and numbers, for the position on show. */
 function evalTipHtml(){
-  const n = game.history().length, h = game.history();
+  const n = viewedPly(), h = game.history();
   const head = '<div class="t-head"><span class="t-san">'
     + (n ? "After " + Math.ceil(n/2) + (n % 2 ? "." : "…") + h[n-1] : "Starting position")
     + '</span><span class="t-rate">Position</span></div>';
@@ -784,14 +830,15 @@ function evalTipHtml(){
     const lead = Math.abs(e.white) < 20 ? "level"
       : (e.white > 0 ? "White" : "Black") + " better";
     rows.push(["Evaluation", evalText(e) + "  ·  " + lead]);
-    rows.push(["To move", game.turn() === "w" ? "White" : "Black"]);
+    rows.push(["To move", n % 2 === 0 ? "White" : "Black"]);
     rows.push(["Replies that hold", (e.capped ? RES_FULL + "+" : e.res.toFixed(1)) + " of " + RES_FULL]);
     rows.push(["Legal moves", String(e.legal)]);
     if (!e.capped && e.res < 2)
       note = "The bar is drawn thin because that assessment rests on very few moves.";
   }
-  if (book && book.moves && book.moves.length){
-    const ms = book.moves.slice().sort((a,b) => gcount(b) - gcount(a));
+  const bk = displayBook();
+  if (bk && bk.moves && bk.moves.length){
+    const ms = bk.moves.slice().sort((a,x) => gcount(x) - gcount(a));
     const tot = ms.reduce((s,m) => s + gcount(m), 0);
     rows.push(["Games in " + poolLabel(), fmt(tot)]);
     rows.push(["Crowd plays", ms[0].san + "  " + Math.round(100 * gcount(ms[0]) / tot) + "%"]);
@@ -994,6 +1041,8 @@ const RATINGS = {
 };
 /* one entry per ply reached, index 0 being the starting position */
 let evalByPly = [];
+/* same shape for the opening line, so the ribbon can name any viewed ply */
+let openByPly = [];
 
 const noisier = (a, x) => ((x.captured ? VAL[x.captured] : 0) + (x.promotion ? 800 : 0))
                         - ((a.captured ? VAL[a.captured] : 0) + (a.promotion ? 800 : 0));
@@ -1366,9 +1415,9 @@ async function refreshPosition(){
 }
 function newGame(){
   game = new Chess();
-  exitReview(); savedNote = null; hideTip();
-  varFrom = null; mainGame = null; mainEval = null; syncVarUI();
-  evalByPly = []; vhCache = {len:-1, list:[]};
+  exitReview(); hideTip();
+  varFrom = null; mainGame = null; mainEval = null; mainOpen = null; syncVarUI();
+  evalByPly = []; openByPly = []; vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
   $("note").textContent = ""; draw(); renderMoves(); renderRibbon(); updateEval();
