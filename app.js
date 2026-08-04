@@ -308,7 +308,12 @@ function gotoPly(n){
   const h = game.history({verbose:true});
   n = Math.max(0, Math.min(h.length, n));
   if (n === h.length){
-    if (exitReview()){ draw(); renderMoves(); }
+    if (exitReview()){
+      draw(); renderMoves(); syncEvalBar();
+      /* rejoining is the only moment a coach turn left waiting — from toggling
+         the coach on mid-review — can be handed back to it */
+      if (coachMode && !busy && !game.game_over() && game.turn() !== userColor) step();
+    }
     return;
   }
   if (reviewPly === null) savedNote = $("note").innerHTML;   // to restore on the way out
@@ -316,12 +321,15 @@ function gotoPly(n){
   for (let i = 0; i < n; i++) g.move(h[i].san);
   reviewPly = n; reviewGame = g;
   sel = null; legalTargets = [];
-  draw(); renderMoves();
+  draw(); renderMoves(); syncEvalBar();
   const where = n
     ? "after " + Math.ceil(n/2) + (n % 2 ? "." : "…") + h[n-1].san
     : "at the starting position";
-  $("note").innerHTML = '<b>Reviewing</b> — ' + where +
-    '. <span class="hot">→</span> to step forward, End to rejoin the game.';
+  /* a move can only be branched off where it is your turn, so say which it is */
+  const yours = !coachMode || g.turn() === userColor;
+  $("note").innerHTML = '<b>Reviewing</b> — ' + where + '. ' + (yours
+    ? '<span class="hot">Make a move to play from here</span>, or → to step forward.'
+    : '<span class="hot">→</span> to step forward, End to rejoin the game.');
 }
 function exitReview(){
   if (reviewPly === null) return false;
@@ -329,27 +337,37 @@ function exitReview(){
   if (savedNote !== null){ $("note").innerHTML = savedNote; savedNote = null; }
   return true;
 }
+/* Branching. Everything after ply n stops having happened — called the moment
+   a move is played from a reviewed position and never before, so walking the
+   history on its own still changes nothing. */
+function truncateTo(n){
+  while (game.history().length > n) game.undo();
+  evalByPly.length = n + 1;
+  vhCache = {len:-1, list:[]};
+  book = null; outOfBook = false;   // the old book described a line we just left
+  hideTip();
+  exitReview();
+}
 
 /* ============================ interaction ============================ */
+/* Moves are read from whatever position is on the board. While reviewing that
+   is an earlier one, and playing there branches the game from it — so two
+   steps back and a different move is the take-back, without a button for it. */
 function onSquare(i){
-  if (busy || game.game_over()) return;
-  if (reviewPly !== null){
-    $("note").innerHTML = '<b>Reviewing an earlier position.</b> Press End (or → repeatedly) '
-      + 'to rejoin the game before moving.';
-    return;
-  }
-  if (coachMode && game.turn() !== userColor) return;
+  const view = reviewGame || game;
+  if (busy || view.game_over()) return;
+  if (coachMode && view.turn() !== userColor) return;
   const name = sqName(i);
   if (sel && legalTargets.includes(name)){
-    const opts = game.moves({square: sel, verbose: true}).filter(m => m.to === name);
-    if (opts.some(m => m.flags.includes("p"))) { pending = {from: sel, to: name, color: game.turn()}; showPromo(); return; }
+    const opts = view.moves({square: sel, verbose: true}).filter(m => m.to === name);
+    if (opts.some(m => m.flags.includes("p"))) { pending = {from: sel, to: name, color: view.turn()}; showPromo(); return; }
     commit({from: sel, to: name});
     return;
   }
-  const piece = game.get(name);
-  if (piece && piece.color === game.turn()){
+  const piece = view.get(name);
+  if (piece && piece.color === view.turn()){
     sel = name;
-    legalTargets = game.moves({square: name, verbose: true}).map(m => m.to);
+    legalTargets = view.moves({square: name, verbose: true}).map(m => m.to);
   } else { sel = null; legalTargets = []; }
   draw();
 }
@@ -364,7 +382,7 @@ function showPromo(){
   });
 }
 function commit(mv){
-  exitReview();
+  if (reviewPly !== null) truncateTo(reviewPly);   // the move branches from here
   const before = book;
   const m = game.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
   if (!m) { sel = null; legalTargets = []; draw(); return; }
@@ -978,19 +996,38 @@ function cpLabel(cp){
   return (p >= 0 ? "+" : "-") + Math.abs(p).toFixed(Math.abs(p) >= 10 ? 0 : 1);
 }
 
+/* The bar belongs to the position on the board, not to the end of the game.
+   Every ply keeps its own search result, so stepping through history repaints
+   from the record instead of re-searching — instant, and it means an eval
+   landing for the live game cannot yank the bar out from under a review. */
+function viewedPly(){ return reviewPly === null ? game.history().length : reviewPly; }
+function paintPly(ply){
+  const e = evalByPly[ply];
+  if (!e){ paintEval(evalPct, "…", evalThinSide, evalThick, true); return; }
+  const turn = ply % 2 === 0 ? "w" : "b";        // White starts, so parity is the mover
+  if (e.over === "checkmate")
+    return paintEval(turn === "w" ? 0 : 100, turn === "w" ? "0–1" : "1–0", null, 1);
+  if (e.over === "draw") return paintEval(50, "½–½", null, 1);
+  const w = e.white, mate = Math.abs(w) >= 9000;
+  const leader = w > 0 ? "w" : w < 0 ? "b" : null;
+  paintEval(mate ? (w > 0 ? 100 : 0) : cpToPct(w),
+            mate ? (w > 0 ? "#" : "-#") : cpLabel(w),
+            leader === turn ? leader : null,          // thin only for the side to move
+            Math.min(1, Math.max(RES_MIN, e.res / RES_FULL)));
+}
+function syncEvalBar(){ paintPly(viewedPly()); }
+
 async function updateEval(){
   const mine = ++evalToken;
   const ply = game.history().length;
   const g = new Chess(game.fen());
 
   if (g.game_over()){
-    if (g.in_checkmate()) paintEval(g.turn() === "w" ? 0 : 100, g.turn() === "w" ? "0–1" : "1–0", null, 1);
-    else paintEval(50, "½–½", null, 1);
     /* a mated side is worth -99000 to itself; a draw is worth nothing to
        either, which is what makes stalemating a won position score as the
        blunder it is */
     const mated = g.in_checkmate();
-    recordEval(ply, {
+    recordEval(ply, {                   // recording repaints the bar
       best: mated ? -99000 : 0,
       white: mated ? (g.turn() === "w" ? -99000 : 99000) : 0,
       res: RES_FULL, legal: 0, capped: false,
@@ -999,7 +1036,9 @@ async function updateEval(){
     return;
   }
 
-  paintEval(evalPct, "…", evalThinSide, evalThick, true);
+  /* only the live position may show a search in progress; a review is looking
+     at a ply that already has its answer */
+  if (reviewPly === null) paintEval(evalPct, "…", evalThinSide, evalThick, true);
   await sleep(0);                       // let the move render before we search
   if (mine !== evalToken) return;
 
@@ -1048,19 +1087,12 @@ async function updateEval(){
       nodes = carried;
     }
   }
-  const thick = Math.min(1, Math.max(RES_MIN, resilience / RES_FULL));
-
   const white = g.turn() === "w" ? best : -best;    // negamax is side-to-move relative
-  const leader = white > 0 ? "w" : white < 0 ? "b" : null;
   /* Resilience is measured over the moves of the side to move, so it only
-     describes an advantage when that side is the one holding it. */
-  const thinSide = leader === g.turn() ? leader : null;
-
-  const label = Math.abs(white) >= 9000 ? (white > 0 ? "#" : "-#") : cpLabel(white);
-  const pct = Math.abs(white) >= 9000 ? (white > 0 ? 100 : 0) : cpToPct(white);
-  paintEval(pct, label, thinSide, thick);
-  /* ms is sorted best-first by the resilience pass, so ms[0] is this side's
-     best reply — kept to spot a plain recapture when rating the move before */
+     describes an advantage when that side is the one holding it — paintPly
+     applies that, along with the label and the width, from the record below.
+     ms is sorted best-first by the resilience pass, so ms[0] is this side's
+     best reply — kept to spot a plain recapture when rating the move before. */
   recordEval(ply, {best, white, res: resilience, legal: ms.length, capped, over: null,
                    bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || ""))});
 }
@@ -1120,6 +1152,7 @@ function widenPool(){
 function recordEval(ply, data){
   evalByPly[ply] = data;
   renderMoves();
+  syncEvalBar();
   /* a tip open on the bar was showing "still evaluating"; fill it in */
   if (tipEval && !tipEl.hidden) showEvalTip(tipPinned);
 }
@@ -1225,16 +1258,6 @@ function syncNav(){
   $("next").disabled = reviewPly === null;
 }
 
-$("undo").onclick = () => {
-  if (busy) return;
-  exitReview();
-  game.undo(); if (coachMode && game.turn() !== userColor) game.undo();
-  evalByPly.length = game.history().length + 1;   // records past here describe moves that no longer exist
-  hideTip();
-  sel = null; legalTargets = []; $("note").textContent = "";
-  draw(); renderMoves(); updateEval(); refreshPosition();
-};
-
 /* keyboard: arrows review the game, C toggles the coach. Ignored while a
    control has focus, so arrowing through the level select still works. */
 document.addEventListener("keydown", e => {
@@ -1280,7 +1303,8 @@ async function refreshPosition(){
   book = await getBook(game.fen());
   absorbOpening(book); renderRibbon(); renderCands();
   busy = false;
-  if (coachMode && game.turn() !== userColor && !game.game_over()) step();
+  /* never move for the coach while the board is showing an earlier position */
+  if (coachMode && reviewPly === null && game.turn() !== userColor && !game.game_over()) step();
 }
 function newGame(){
   game = new Chess();
