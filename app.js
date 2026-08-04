@@ -355,62 +355,39 @@ async function ensureViewBook(){
   viewPending = false;
   renderCands();
 }
-/* ===================== variations =====================
-   Playing from a reviewed position opens a sandbox rather than rewriting
-   history. The trick is that a variation is a whole game in its own right —
-   it replays the shared opening plies and continues from there — so entering
-   one is just a matter of pointing `game` at it and parking the real one.
-   Every part of the app that reads `game` then works inside the sandbox for
-   free: the coach answers in it, the explorer follows it, moves get rated in
-   it. Coming back is the same swap in reverse, and the parked game was never
-   touched, so there is nothing to restore. */
-let mainGame = null, mainEval = null, mainOpen = null;
-let varFrom = null;              // shared plies; ply varFrom+1 onward is the variation
-
-function enterVariation(n){
-  if (varFrom === null){ mainGame = game; mainEval = evalByPly; mainOpen = openByPly; }
-  /* branching again from before the split moves the split back with it */
-  varFrom = varFrom === null ? n : Math.min(varFrom, n);
+/* ===================== branching =====================
+   Playing from a reviewed position is a take-back: the moves after it never
+   happened, and the line you play from there is the game. Nothing is parked
+   and nothing is kept in reserve, so there is no second game to get back to
+   and no state to announce — what is on the board is all there is.
+   `game` is rebuilt rather than unwound because a game is only ever read
+   through it: rebuild it and the coach, the explorer and the ratings are all
+   working on the new line without being told. */
+function branchAt(n){
   const h = game.history();
   const g = new Chess();
   for (let i = 0; i < n; i++) g.move(h[i]);
   game = g;
-  /* slice copies, so the parked arrays are safe; both are per-ply records of
-     the line and have to travel together */
+  /* the per-ply records are this line's memory, so they are cut where the
+     line is cut — and the opening goes back to whatever was true at that
+     ply, since the named line that followed is no longer part of the game */
   evalByPly = evalByPly.slice(0, n + 1);
   openByPly = openByPly.slice(0, n + 1);
+  const rec = openingAt(n);
+  lastName = rec ? rec.name : null;
+  lastEco = rec ? rec.eco : null;
+  bookPlies = rec ? rec.namedAt : 0;
+  outOfBook = rec ? rec.out : false;
   evalToken++;                             // abandon any search running for the old line
   vhCache = {len:-1, list:[]};
-  book = null; outOfBook = false;
+  book = null;
   hideTip();
   exitReview();
-  syncVarUI();
-}
-function exitVariation(){
-  if (varFrom === null) return false;
-  game = mainGame; evalByPly = mainEval; openByPly = mainOpen;
-  mainGame = null; mainEval = null; mainOpen = null; varFrom = null;
-  evalToken++;
-  vhCache = {len:-1, list:[]};
-  book = null; outOfBook = false;
-  hideTip();
-  exitReview();
-  syncVarUI();
-  return true;
-}
-function syncVarUI(){ $("tomain").hidden = varFrom === null; }
-function inVariation(n){ return varFrom !== null && n > varFrom; }
-
-function returnToMain(){
-  if (!exitVariation()) return;
-  sel = null; legalTargets = [];
-  draw(); renderMoves(); syncEvalBar(); renderRibbon(); renderCands(); reportViewedMove();
-  refreshPosition();
 }
 
 /* ============================ interaction ============================ */
 /* Moves are read from whatever position is on the board. While reviewing that
-   is an earlier one, and playing there branches the game from it — so two
+   is an earlier one, and playing there restarts the game from it — so two
    steps back and a different move is the take-back, without a button for it. */
 /* Whichever side is to move in the position on the board can be moved — there
    is no rule to explain because there is no restriction. Playing the coach's
@@ -447,7 +424,7 @@ function showPromo(){
 }
 function commit(mv){
   const before = displayBook();        // the book for the position being played from
-  if (reviewPly !== null) enterVariation(reviewPly);   // explore, do not overwrite
+  if (reviewPly !== null) branchAt(reviewPly);   // the game continues from here
   const m = game.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
   if (!m) { sel = null; legalTargets = []; draw(); return; }
   sel = null; legalTargets = [];
@@ -488,9 +465,9 @@ function reportViewedMove(){
 }
 
 /* ============================ turn loop ============================ */
-/* `line` pins the game this turn belongs to. Entering or leaving a variation
-   repoints `game`, and this function waits on the network twice — without the
-   check a coach reply meant for a sandbox could land in the real game. */
+/* `line` pins the game this turn belongs to. Branching repoints `game`, and
+   this function waits on the network twice — without the check a coach reply
+   meant for the line you left could land in the one you are now playing. */
 async function step(){
   const line = game;
   const stale = () => { if (game === line) return false; busy = false; return true; };
@@ -636,18 +613,21 @@ function absorbOpening(data){
   openByPly[hist.length] = {name: lastName, eco: lastEco, namedAt: bookPlies,
                             out: outOfBook, fen: game.fen()};
 }
+/* the deepest record at or before a ply is the one that names the position
+   there: plies played out of book leave no record of their own */
+function openingAt(n){
+  for (let i = Math.min(n, openByPly.length - 1); i >= 0; i--){
+    if (openByPly[i]) return openByPly[i];
+  }
+  return null;
+}
 
 /* ============================ rendering ============================ */
 function renderRibbon(){
   const rb = $("ribbon");
   const n = viewedPly();
-  /* the deepest record at or before the viewed ply names this position */
-  let rec = null;
-  for (let i = Math.min(n, openByPly.length - 1); i >= 0; i--){
-    if (openByPly[i]){ rec = openByPly[i]; break; }
-  }
-  $("depth").textContent = varFrom !== null ? "variation"
-    : (rec && rec.out) ? "out of book" : "";
+  const rec = openingAt(n);
+  $("depth").textContent = (rec && rec.out) ? "out of book" : "";
   if (!rec || !rec.name){
     $("eco").textContent = "Opening"; $("oname").textContent = "Starting position";
     $("osub").textContent = n ? "No named line yet." : "Make a move to begin.";
@@ -723,8 +703,7 @@ function renderMoves(){
   const ply = i => {
     const n = i + 1, r = rateMove(n);
     const mark = reviewPly === n ? "cur" : n === shown ? "recent" : n === shown - 1 ? "older" : "";
-    const cls = ((mark ? mark + " " : "") + (inVariation(n) ? "var " : "")
-                 + (r ? RATINGS[r.key].cls : "")).trim();
+    const cls = ((mark ? mark + " " : "") + (r ? RATINGS[r.key].cls : "")).trim();
     const g = r ? RATINGS[r.key].glyph : "";
     return '<b data-ply="' + n + '"' + (cls ? ' class="' + cls + '"' : '') + '>'
       + h[i] + (g ? '<i>' + g + '</i>' : '') + '</b>';
@@ -1186,7 +1165,7 @@ async function updateEval(){
       nodes = carried;
     }
   }
-  if (mine !== evalToken) return;   // a variation switch abandoned this search
+  if (mine !== evalToken) return;   // branching abandoned this search
   const white = g.turn() === "w" ? best : -best;    // negamax is side-to-move relative
   /* Resilience is measured over the moves of the side to move, so it only
      describes an advantage when that side is the one holding it — paintPly
@@ -1348,8 +1327,6 @@ $("vary").onclick = () => {
   renderCands();                    // the in-play marks appear or clear with it
 };
 
-$("tomain").onclick = returnToMain;
-
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
 $("next").onclick = () => { if (reviewPly !== null) gotoPly(reviewPly + 1); };
@@ -1371,9 +1348,7 @@ document.addEventListener("keydown", e => {
     case "ArrowLeft":  e.preventDefault(); gotoPly(at - 1); break;
     case "ArrowRight": e.preventDefault(); gotoPly(at + 1); break;
     case "Home":       e.preventDefault(); gotoPly(0); break;
-    /* End means "back to where the game really is", which from inside a
-       variation is the game you left, not the end of the sandbox */
-    case "End":        e.preventDefault(); varFrom === null ? gotoPly(n) : returnToMain(); break;
+    case "End":        e.preventDefault(); gotoPly(n); break;
     case "c": case "C": e.preventDefault(); setCoach(!coachMode); break;
   }
 });
@@ -1415,7 +1390,6 @@ async function refreshPosition(){
 function newGame(){
   game = new Chess();
   exitReview(); hideTip();
-  varFrom = null; mainGame = null; mainEval = null; mainOpen = null; syncVarUI();
   evalByPly = []; openByPly = []; vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
