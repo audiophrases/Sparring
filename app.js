@@ -225,7 +225,7 @@ const $ = id => document.getElementById(id);
 
 /* ============================ board ============================ */
 const boardEl = $("board");
-const boardCol = document.querySelector(".boardcol");
+const wrapEl = document.querySelector(".wrap");
 const cells = [];
 for (let i = 0; i < 64; i++) {
   const d = document.createElement("div");
@@ -242,12 +242,30 @@ for (let i = 0; i < 64; i++) {
    that is what draws hairlines between squares and makes some files a pixel
    wider than others. Choosing a multiple of 8 makes every track a whole
    number of pixels, so the eight columns are identical by construction. */
-const MAX_BOARD = 640, MIN_BOARD = 192;
+const MAX_BOARD = 720, MIN_BOARD = 192;
+/* What the board may not grow into. Side by side with the panel, that is the
+   header above it and the eval bar below — 14 of body padding, 43 of header,
+   16 of its margin, then the bar's 10 + 30, and 7 of slack. Stacked, the move
+   list and the controls sit under the board instead of beside it, so the old
+   roomier reserve stays and that layout comes out unchanged. */
+const CHROME_WIDE = 120, CHROME_STACKED = 180;
+/* the panel's width and the column gap are declared in the stylesheet; read
+   them back rather than repeating the numbers here, where they could drift */
+const cssPx = n => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)) || 0;
+/* the exact complement of the stylesheet's own breakpoint, so the two can
+   never disagree about which layout is on screen */
+const narrow = window.matchMedia("(max-width:860px)");
 let boardSize = 0;
 function sizeBoard(){
-  const avail = boardCol.clientWidth;
-  const fitsHeight = Math.max(280, window.innerHeight - 180);
-  const raw = Math.min(avail, MAX_BOARD, fitsHeight);
+  /* Measured off the body, which is the widest thing in the page that the
+     board does not size: the wrap and the board's own column are both derived
+     from --board now, so measuring either would be circular, and the viewport
+     itself reports the width the reserved scrollbar gutter has already taken. */
+  const pad = getComputedStyle(document.body);
+  const room = document.body.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+  const beside = (narrow.matches || !panelOpen) ? 0 : cssPx("--panelw") + cssPx("--colgap");
+  const fitsHeight = Math.max(280, window.innerHeight - (narrow.matches ? CHROME_STACKED : CHROME_WIDE));
+  const raw = Math.min(room - beside, MAX_BOARD, fitsHeight);
   const size = Math.max(MIN_BOARD, Math.floor(raw / 8) * 8);
   if (size === boardSize) return;
   boardSize = size;
@@ -255,7 +273,9 @@ function sizeBoard(){
 }
 sizeBoard();
 window.addEventListener("resize", sizeBoard);
-if (window.ResizeObserver) new ResizeObserver(sizeBoard).observe(boardCol);
+/* the page grows and shrinks with --board, so watching it settles in one pass:
+   the second call finds the same size and stops */
+if (window.ResizeObserver) new ResizeObserver(sizeBoard).observe(document.documentElement);
 
 function sqName(i){
   let r = Math.floor(i/8), f = i%8;
@@ -1334,6 +1354,7 @@ function setPanel(v){
   panelOpen = v;
   $("sidepanel").hidden = !panelOpen;
   $("cols").classList.toggle("solo", !panelOpen);
+  wrapEl.classList.toggle("solo", !panelOpen);   // the app is board-wide now
   $("peek").textContent = panelOpen ? "Hide panel" : "Show panel";
   $("candtoggle").setAttribute("aria-expanded", String(panelOpen));
   sizeBoard();

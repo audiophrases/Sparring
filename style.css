@@ -29,11 +29,17 @@
 
   --board:480px;                   /* replaced at runtime; multiple of 8 */
   --sq:calc(var(--board) / 8);
+  --panelw:368px;                  /* the explorer column, on wide screens */
+  --colgap:18px;
 
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 }
+/* The panel only claims the extra width once there is width to spare. Below
+   this it stays as narrow as it always was, because every pixel it takes in
+   the 861–1150 range comes straight out of the board beside it. */
+@media(min-width:1150px){ :root{--panelw:420px} }
 *{box-sizing:border-box;margin:0;padding:0}
 /* .legend and .warn carry their own display, so [hidden] has to outrank them */
 [hidden]{display:none!important}
@@ -42,7 +48,13 @@ html,body{background:var(--ink);color:var(--text);font-family:var(--mono);-webki
    available width by a scrollbar and resize the board out from under you */
 html{scrollbar-gutter:stable}
 body{padding:14px 14px 40px;font-size:14px;line-height:1.45}
-.wrap{max-width:1080px;margin:0 auto}
+/* On a wide screen the app is exactly as wide as it needs to be — board, gap,
+   panel — and centred, so what is left over falls either side of it instead of
+   pooling in the middle between the two columns. The board is measured against
+   the viewport and never against this element: sizing it from something that is
+   itself sized from the board would have the two chasing each other. */
+.wrap{width:100%;max-width:calc(var(--board) + var(--colgap) + var(--panelw));margin:0 auto}
+.wrap.solo{max-width:var(--board)}
 
 /* header */
 header{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;
@@ -55,10 +67,16 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 .tag{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 
 /* layout */
-.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,368px);gap:18px;align-items:start}
-@media(max-width:860px){.cols{grid-template-columns:1fr}}
-/* panel collapsed: the board takes the whole width back */
-.cols.solo{grid-template-columns:minmax(0,1fr)}
+.cols{display:grid;grid-template-columns:var(--board) var(--panelw);
+  gap:var(--colgap);align-items:start}
+/* phones keep the stacked layout and their own width, untouched by any of the
+   wide-screen sizing above */
+@media(max-width:860px){
+  .wrap,.wrap.solo{max-width:none}
+  .cols{grid-template-columns:1fr}
+}
+/* panel collapsed: the board is the whole app */
+.cols.solo{grid-template-columns:var(--board)}
 /* .boardcol spans the grid track and is what app.js measures;
    .stack is pinned to the board's own width so the eval bar,
    ribbon and controls line up with the board edges exactly. */
@@ -251,5 +269,48 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 .promo.show{display:flex}
 .promo button{padding:6px;background:var(--panel);line-height:0}
 .promo .pc{position:static;width:calc(var(--sq) * .82);height:calc(var(--sq) * .82)}
+
+/* ============================================================
+   Wide screens only. Everything above is sized for a phone held in
+   one hand and stays exactly as it is; this block spends the room a
+   desktop has on the two things you actually read — the board, which
+   grows in sizeBoard(), and the type, which grows here. The query is
+   the complement of the stacking breakpoint, so a layout is never
+   half-phone and half-desktop.
+   ============================================================ */
+@media(min-width:861px){
+  body{font-size:15px}
+  h1{font-size:25px}
+  button{font-size:13px}
+  .nav{font-size:12px}
+  .chip,.mini{font-size:12px;padding:5px 9px}
+
+  .evalbar{height:30px}
+  .evalbar .val{font-size:12px}
+
+  .card{padding:15px 16px}
+  .card h2{font-size:11px}
+  .moves{font-size:14.5px;max-height:240px}
+  .moves b i{font-size:12px}
+
+  /* the explorer rows are the panel's whole reason for existing */
+  .mv{padding:8px 5px}
+  .mv .san{font-size:16.5px;min-width:58px}
+  .mv .pct{font-size:14.5px;min-width:50px}
+  .mv .n{font-size:11.5px}
+  .bar{height:6px}
+  .freq{height:3px}
+  .legend{font-size:11px}
+
+  .ribbon{padding:14px 16px}
+  .ribbon .eco{font-size:11px}
+  .ribbon .name{font-size:22px}
+  .ribbon .sub{font-size:12.5px}
+
+  .note{font-size:13px}
+  .warn{font-size:12.5px}
+  .tip{max-width:300px;font-size:12px}
+  .t-san{font-size:14px}
+}
 
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
