@@ -306,6 +306,7 @@ function findKing(color, g){
    live game — so there is no separate "resume" to remember. */
 function gotoPly(n){
   const h = game.history({verbose:true});
+  clearBranchAsk();                 // the question was about a position we are leaving
   n = Math.max(0, Math.min(h.length, n));
   if (n === h.length){
     if (exitReview()){
@@ -337,9 +338,30 @@ function exitReview(){
   if (savedNote !== null){ $("note").innerHTML = savedNote; savedNote = null; }
   return true;
 }
-/* Branching. Everything after ply n stops having happened — called the moment
-   a move is played from a reviewed position and never before, so walking the
-   history on its own still changes nothing. */
+/* Branching discards the continuation, and nothing brings it back. Undoing the
+   last move and its reply is the ordinary take-back and passes silently;
+   throwing away more than that asks first. */
+const BRANCH_WARN = 2;          // plies that may be discarded without asking
+let pendingBranch = null;
+function askBranch(mv, discard){
+  const probe = new Chess(reviewGame.fen());
+  const m = probe.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
+  const first = game.history()[reviewPly];
+  pendingBranch = mv;
+  $("confirmtext").innerHTML = 'Playing <b>' + (m ? m.san : "this move") + '</b> here discards <b>'
+    + discard + '</b> half-move' + (discard === 1 ? "" : "s") + ', from <b>'
+    + Math.ceil((reviewPly + 1) / 2) + (reviewPly % 2 ? "…" : ".") + first + '</b> onward.';
+  $("confirm").hidden = false;
+}
+function clearBranchAsk(){
+  if (!pendingBranch) return;
+  pendingBranch = null;
+  $("confirm").hidden = true;
+}
+
+/* Everything after ply n stops having happened — called the moment a move is
+   played from a reviewed position and never before, so walking the history on
+   its own still changes nothing. */
 function truncateTo(n){
   while (game.history().length > n) game.undo();
   evalByPly.length = n + 1;
@@ -356,6 +378,7 @@ function truncateTo(n){
 function onSquare(i){
   const view = reviewGame || game;
   if (busy || view.game_over()) return;
+  clearBranchAsk();                 // a new click supersedes whatever was pending
   if (coachMode && view.turn() !== userColor) return;
   const name = sqName(i);
   if (sel && legalTargets.includes(name)){
@@ -382,7 +405,11 @@ function showPromo(){
   });
 }
 function commit(mv){
-  if (reviewPly !== null) truncateTo(reviewPly);   // the move branches from here
+  if (reviewPly !== null){
+    const discard = game.history().length - reviewPly;
+    if (discard > BRANCH_WARN){ askBranch(mv, discard); return; }
+    truncateTo(reviewPly);                         // the move branches from here
+  }
   const before = book;
   const m = game.move({from: mv.from, to: mv.to, promotion: mv.promotion || "q"});
   if (!m) { sel = null; legalTargets = []; draw(); return; }
@@ -1249,6 +1276,15 @@ $("vary").onclick = () => {
   renderCands();                    // the in-play marks appear or clear with it
 };
 
+$("confirmyes").onclick = () => {
+  const mv = pendingBranch, n = reviewPly;
+  clearBranchAsk();
+  if (!mv || n === null) return;
+  truncateTo(n);                    // leaves review, so commit takes the normal path
+  commit(mv);
+};
+$("confirmno").onclick = () => { clearBranchAsk(); sel = null; legalTargets = []; draw(); };
+
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
 $("next").onclick = () => { if (reviewPly !== null) gotoPly(reviewPly + 1); };
@@ -1266,6 +1302,8 @@ document.addEventListener("keydown", e => {
   if (t && (/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) || t.isContentEditable)) return;
   const n = game.history().length;
   const at = reviewPly === null ? n : reviewPly;
+  if (e.key === "Escape" && pendingBranch){ e.preventDefault(); $("confirmno").click(); return; }
+  if (e.key === "Enter" && pendingBranch){ e.preventDefault(); $("confirmyes").click(); return; }
   switch (e.key){
     case "ArrowLeft":  e.preventDefault(); gotoPly(at - 1); break;
     case "ArrowRight": e.preventDefault(); gotoPly(at + 1); break;
@@ -1308,7 +1346,7 @@ async function refreshPosition(){
 }
 function newGame(){
   game = new Chess();
-  exitReview(); savedNote = null; hideTip();
+  exitReview(); savedNote = null; hideTip(); clearBranchAsk();
   evalByPly = []; vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
