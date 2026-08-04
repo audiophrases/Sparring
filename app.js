@@ -1187,6 +1187,24 @@ async function updateEval(){
    carries the pools, so flipping back to a set you have already read costs
    no request. */
 function poolParam(){ return pools.join(","); }
+/* The pools are a setting rather than part of a game, so they outlive the
+   tab. What comes back out of storage is filtered through BUCKETS instead of
+   being trusted: a stale or hand-edited value would otherwise be sent to the
+   explorer as a rating band that does not exist. */
+const POOLS_KEY = "ratingPools";
+function storedPools(){
+  let raw = "";
+  try { raw = localStorage.getItem(POOLS_KEY) || ""; } catch(e){ return null; }
+  /* the empty segments have to go before Number sees them: Number("") is 0,
+     and 0 is a real bucket — the one below 1000 — so an empty or trailing
+     comma would otherwise read as a deliberate pick of the weakest pool */
+  const want = raw.split(",").filter(s => s !== "").map(Number);
+  const keep = BUCKETS.filter(v => want.includes(v));
+  return keep.length ? keep : null;
+}
+function rememberPools(){
+  try { localStorage.setItem(POOLS_KEY, poolParam()); } catch(e){}
+}
 /* The rating range actually covered, not the list of floors: picking 1000
    through 1600 reaches games averaging up to 1799, and saying "1000–1600"
    would understate it by a whole band. */
@@ -1217,7 +1235,7 @@ function renderChips(){
 function setPools(next){
   const sorted = BUCKETS.filter(v => next.includes(v));
   if (!sorted.length) return;                     // never leave the book with nothing to read
-  pools = sorted; renderChips(); refreshPosition();
+  pools = sorted; rememberPools(); renderChips(); refreshPosition();
 }
 function widenPool(){
   const idx = pools.map(v => BUCKETS.indexOf(v));
@@ -1415,7 +1433,7 @@ function newGame(){
 }
 
 if (token) $("tok").textContent = "Token saved";
-pools = DEFAULT_POOLS.slice(); renderChips();
+pools = storedPools() || DEFAULT_POOLS.slice(); renderChips();
 setPanel(true);
 draw();
 newGame();
