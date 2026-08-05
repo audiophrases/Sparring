@@ -360,19 +360,19 @@ function exitReview(){
 let viewSeq = 0, viewPending = false;
 function displayBook(){
   if (reviewPly === null || !reviewGame) return book;
-  return cache.get(reviewGame.fen() + "|" + poolParam()) || null;
+  return cache.get(bookKey(reviewGame.fen())) || null;
 }
 async function ensureViewBook(){
   const mine = ++viewSeq;
   viewPending = false;
   if (reviewPly === null || apiDown) return;
   const fen = reviewGame.fen();
-  if (cache.has(fen + "|" + poolParam())) return;
+  if (cache.has(bookKey(fen))) return;
   const fresh = () => mine === viewSeq && reviewPly !== null && reviewGame.fen() === fen;
   viewPending = true;
   await sleep(250);                    // let a run of arrow presses settle
   if (!fresh()) return;
-  await getBook(fen);
+  await lookUp(fen);
   if (!fresh()){ return; }
   viewPending = false;
   renderCands();
@@ -405,6 +405,7 @@ function branchAt(n){
   book = null;
   hideTip();
   exitReview();
+  saveSession();          // the shorter line is the game that gets remembered
 }
 
 /* ============================ interaction ============================ */
@@ -451,6 +452,7 @@ function commit(mv){
   if (!m) { sel = null; legalTargets = []; draw(); return; }
   sel = null; legalTargets = [];
   reportUserMove(m, before);
+  saveSession();
   draw(); renderMoves(); updateEval();
   step();
 }
@@ -467,8 +469,10 @@ function describeMove(san, prev){
   const pct = 100 * gcount(hit) / tot;
   const rank = prev.moves.slice().sort((a,x) => gcount(x)-gcount(a)).findIndex(x => x.san === san) + 1;
   const word = pct > 40 ? "the main choice" : pct > 15 ? "a common choice" : pct > 3 ? "a sideline" : "rare";
+  /* quoted against the crowd that actually answered, which is not always the
+     one you picked — the explorer reaches past your pools when it has to */
   return '<b>' + san + '</b> — ' + word + ': <span class="hot">' + pct.toFixed(1) +
-    '%</span> of ' + poolLabel() + ' players, ' + fmt(gcount(hit)) +
+    '%</span> of ' + poolLabel(poolsOf(prev)) + ' players, ' + fmt(gcount(hit)) +
     ' games (#' + rank + ' most played).';
 }
 function reportUserMove(m, prev){
@@ -482,7 +486,7 @@ function reportViewedMove(){
   const n = viewedPly(), h = game.history();
   if (!n){ $("note").textContent = ""; return; }
   const rec = openByPly[n-1];
-  const prev = rec && rec.fen ? cache.get(rec.fen + "|" + poolParam()) : null;
+  const prev = rec && rec.fen ? cache.get(bookKey(rec.fen)) : null;
   $("note").innerHTML = describeMove(h[n-1], prev);
 }
 
@@ -496,7 +500,7 @@ async function step(){
   busy = true;
   book = null; renderCands(); renderRibbon();
   if (game.game_over()){ finish(); busy = false; return; }
-  const data = await getBook(game.fen());
+  const data = await lookUp(game.fen());
   if (stale()) return;
   book = data;
   absorbOpening(data);
@@ -509,10 +513,11 @@ async function step(){
   if (!coachMode || game.turn() === userColor){ busy = false; return; }
   const mv = chooseMove(data);
   game.move(mv);
+  saveSession();
   exitReview();          // the reply is the point — snap back to it
   draw(); renderMoves(); updateEval();
   if (game.game_over()){ book = null; renderCands(); finish(); busy = false; return; }
-  const d2 = await getBook(game.fen());
+  const d2 = await lookUp(game.fen());
   if (stale()) return;
   book = d2; absorbOpening(d2);
   renderRibbon(); renderCands();
@@ -572,14 +577,15 @@ const gcount = m => (m.white||0) + (m.draws||0) + (m.black||0);
 /* ============================ opening explorer ============================ */
 const cache = new Map();
 let lastCall = 0;
-async function getBook(fen){
-  const key = fen + "|" + poolParam();
+async function getBook(fen, list){
+  const param = poolParam(list);
+  const key = fen + "|" + param;
   if (cache.has(key)) return cache.get(key);
   if (apiDown) return null;
   const gap = Date.now() - lastCall;
   if (gap < 900) await sleep(900 - gap);
   const url = "https://explorer.lichess.ovh/lichess?variant=standard&moves=10&topGames=0&recentGames=0"
-    + "&speeds=" + SPEEDS + "&ratings=" + poolParam() + "&fen=" + encodeURIComponent(fen);
+    + "&speeds=" + SPEEDS + "&ratings=" + param + "&fen=" + encodeURIComponent(fen);
   let why = "";
   for (let attempt = 0; attempt < 2; attempt++){
     try{
@@ -600,6 +606,36 @@ async function getBook(fen){
   }
   showOffline(why || "no response"); apiDown = true;
   return null;
+}
+
+/* The pools are a difficulty setting, not a search radius. So when a position
+   has run past the ones you picked, the sample is widened for that one lookup
+   rather than for good — a band at a time, so the answer comes from the
+   closest crowd that has actually been here — and your chips are left exactly
+   where you put them. Only when every band has been asked is the position
+   really unplayed, and only then does the coach have to calculate instead.
+   What comes back is tagged with the set that answered, so the panel can say
+   whose games these are and review can find them again in the cache. */
+const reachBy = new Map();            // fen -> the pool set that answered it
+const bookKey = fen => fen + "|" + (reachBy.get(fen) || poolParam());
+const hasMoves = d => !!(d && d.moves && d.moves.length);
+/* the crowd a payload came from, for anything that quotes a percentage of it */
+const poolsOf = d => d && d.pools ? d.pools.split(",").map(Number) : null;
+async function lookUp(fen){
+  let list = pools.slice();
+  let data = await getBook(fen, list);
+  while (!hasMoves(data) && !apiDown && list.length < BUCKETS.length){
+    list = widerThan(list);
+    data = await getBook(fen, list);
+  }
+  const param = poolParam(list);
+  if (hasMoves(data)){
+    data.pools = param;             // rides along with the cached payload
+    if (param === poolParam()) reachBy.delete(fen); else reachBy.set(fen, param);
+  } else {
+    reachBy.delete(fen);
+  }
+  return data;
 }
 function showOffline(why){
   const box = $("offline");
@@ -680,15 +716,26 @@ function renderCands(){
   const loading = reviewPly === null ? (busy && !bk) : viewPending;
   if (!has && loading){ el.textContent = "Reading the database…"; lg.hidden = true; return; }
   if (!has){
+    /* by the time this shows, every band has been asked — lookUp widens on
+       its own — so it is a statement about the database, not about your pools */
     el.innerHTML = '<span class="ob">' + (apiDown ? "Database unavailable."
-      : "No human games reach this position in the selected pools. You are both improvising.") + '</span>';
-    if (!apiDown) addWidenHint(el, 0);
+      : "No game in the database has reached this position, in any rating band. "
+        + "You are both on your own from here.") + '</span>';
     lg.hidden = true; return;
   }
   const max = gcount(moves[0]);
   /* with variety on, show which replies the coach is actually drawing from */
   const inPlay = variety ? new Set(varietySet(moves).map(m => m.san)) : null;
   el.innerHTML = "";
+  /* whose games these are, whenever they are not the crowd you asked for */
+  const reached = bk.pools && bk.pools !== poolParam();
+  if (reached){
+    const d = document.createElement("div");
+    d.className = "reach";
+    d.innerHTML = "Nobody in your pools has been here, so these are games from <b>"
+      + poolLabel(poolsOf(bk)) + "</b>.";
+    el.appendChild(d);
+  }
   moves.slice(0, 7).forEach(m => {
     const n = gcount(m), pct = 100*n/tot;
     const row = document.createElement("div");
@@ -704,7 +751,8 @@ function renderCands(){
       '<i class="bd" style="width:' + d + '%"></i><i class="bb" style="width:' + b + '%"></i></div>';
     el.appendChild(row);
   });
-  if (tot < THIN) addWidenHint(el, tot);
+  /* no point offering to widen a sample that was already widened to find this */
+  if (tot < THIN && !reached) addWidenHint(el, tot);
   lg.hidden = false;
 }
 /* Offered only when there is somewhere left to widen to. */
@@ -1206,7 +1254,9 @@ async function updateEval(){
    line stops appearing in the games of the band you picked. The cache key
    carries the pools, so flipping back to a set you have already read costs
    no request. */
-function poolParam(){ return pools.join(","); }
+/* Both of these describe a pool set — the one you picked by default, or any
+   other set when the explorer had to reach past yours to answer. */
+function poolParam(list){ return (list || pools).join(","); }
 /* The pools are a setting rather than part of a game, so they outlive the
    tab. What comes back out of storage is filtered through BUCKETS instead of
    being trusted: a stale or hand-edited value would otherwise be sent to the
@@ -1225,15 +1275,41 @@ function storedPools(){
 function rememberPools(){
   try { localStorage.setItem(POOLS_KEY, poolParam()); } catch(e){}
 }
+
+/* ===================== the session =====================
+   The pools keep their own key; this is everything else that should still be
+   true when you come back — which side you are playing, whether the coach and
+   variety are on, whether the panel is open, and the game itself as a PGN,
+   which is all chess.js needs to be the same game again.
+   The per-ply evals and ratings are deliberately not kept: they are analysis
+   of the game rather than the game, and the engine fills them back in from
+   the position you return to. */
+const SESSION_KEY = "session";
+function saveSession(){
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      side: userColor, coach: coachMode, vary: variety,
+      panel: panelOpen, pgn: game.pgn()
+    }));
+  } catch(e){}
+}
+function loadSession(){
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); }
+  catch(e){ return null; }
+}
 /* The rating range actually covered, not the list of floors: picking 1000
    through 1600 reaches games averaging up to 1799, and saying "1000–1600"
    would understate it by a whole band. */
-function poolLabel(){
-  const idx = pools.map(v => BUCKETS.indexOf(v));
+function poolLabel(list){
+  const use = list || pools;
+  const idx = use.map(v => BUCKETS.indexOf(v));
   const run = idx.every((v,i) => i === 0 || v === idx[i-1] + 1);
-  if (!run) return pools.map(bandLabel).join(" / ");
-  const top = bandTop(pools[pools.length - 1]);
-  return top ? pools[0] + "–" + (top - 1) : pools[0] + "+";
+  if (!run) return use.map(bandLabel).join(" / ");
+  const top = bandTop(use[use.length - 1]);
+  /* a run that starts at the bottom band has no floor worth naming — saying
+     "0–2499" invents a precision the lowest bucket does not have */
+  if (!use[0]) return top ? "under " + top : "any rating";
+  return top ? use[0] + "–" + (top - 1) : use[0] + "+";
 }
 function renderChips(){
   const box = $("chips");
@@ -1255,16 +1331,20 @@ function renderChips(){
 function setPools(next){
   const sorted = BUCKETS.filter(v => next.includes(v));
   if (!sorted.length) return;                     // never leave the book with nothing to read
-  pools = sorted; rememberPools(); renderChips(); refreshPosition();
+  /* every "we had to reach past your pools for this one" decision was made
+     against the old set, so none of them survive a new one */
+  pools = sorted; rememberPools(); reachBy.clear(); renderChips(); refreshPosition();
 }
-function widenPool(){
-  const idx = pools.map(v => BUCKETS.indexOf(v));
-  const next = pools.slice();
+/* One step out: the band below the lowest and the band above the highest. */
+function widerThan(list){
+  const idx = list.map(v => BUCKETS.indexOf(v));
+  const next = list.slice();
   const lo = Math.min(...idx), hi = Math.max(...idx);
   if (lo > 0) next.push(BUCKETS[lo-1]);
   if (hi < BUCKETS.length - 1) next.push(BUCKETS[hi+1]);
-  setPools(next);
+  return BUCKETS.filter(v => next.includes(v));
 }
+function widenPool(){ setPools(widerThan(pools)); }
 
 /* ===================== rating a played move =====================
    Every position the game has reached leaves a record here, so a move is
@@ -1340,6 +1420,7 @@ $("newg").onclick = newGame;
    taking over the side you have been playing against is the whole point. */
 function flip(){
   userColor = userColor === "w" ? "b" : "w";
+  saveSession();
   sel = null; legalTargets = []; draw();
   /* "you won" and "you lost" swap with the sides */
   if (game.game_over()){ finish(); return; }
@@ -1357,16 +1438,24 @@ function setPanel(v){
   wrapEl.classList.toggle("solo", !panelOpen);   // the app is board-wide now
   $("peek").textContent = panelOpen ? "Hide panel" : "Show panel";
   $("candtoggle").setAttribute("aria-expanded", String(panelOpen));
+  saveSession();
   sizeBoard();
   if (panelOpen) renderCands();
 }
 $("peek").onclick = () => setPanel(!panelOpen);
 $("candtoggle").onclick = () => setPanel(false);
 
-function setCoach(v){
-  coachMode = v;
+/* the two toggles wear their state, so the buttons are painted from it rather
+   than flipped alongside it — restoring a session sets the flags and calls this */
+function syncToggleUI(){
   $("coach").classList.toggle("on", coachMode);
   $("coach").textContent = coachMode ? "Coach: On" : "Coach: Off";
+  $("vary").classList.toggle("on", variety);
+  $("vary").textContent = variety ? "Variety: On" : "Variety: Off";
+}
+function setCoach(v){
+  coachMode = v;
+  syncToggleUI(); saveSession();
   sel = null; legalTargets = []; draw();
   /* the button already says which it is; the line under the board goes back to
      describing the position, which is all it ever does now */
@@ -1375,12 +1464,12 @@ function setCoach(v){
       && game.turn() !== userColor) step();
 }
 $("coach").onclick = () => setCoach(!coachMode);
-$("vary").onclick = () => {
-  variety = !variety;
-  $("vary").classList.toggle("on", variety);
-  $("vary").textContent = variety ? "Variety: On" : "Variety: Off";
+function setVariety(v){
+  variety = v;
+  syncToggleUI(); saveSession();
   renderCands();                    // the in-play marks appear or clear with it
-};
+}
+$("vary").onclick = () => setVariety(!variety);
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
@@ -1391,7 +1480,7 @@ function syncNav(){
   $("next").disabled = reviewPly === null;
 }
 
-/* keyboard: arrows review the game, C toggles the coach, F swaps sides.
+/* keyboard: arrows review the game, C the coach, V variety, F swaps sides.
    Ignored while a text control has focus, so typing never moves the board. */
 document.addEventListener("keydown", e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1405,6 +1494,7 @@ document.addEventListener("keydown", e => {
     case "Home":       e.preventDefault(); gotoPly(0); break;
     case "End":        e.preventDefault(); gotoPly(n); break;
     case "c": case "C": e.preventDefault(); setCoach(!coachMode); break;
+    case "v": case "V": e.preventDefault(); setVariety(!variety); break;
     case "f": case "F": e.preventDefault(); flip(); break;
   }
 });
@@ -1420,11 +1510,11 @@ $("tok").onclick = () => {
   token = v.trim();
   try { token ? localStorage.setItem("lichessToken", token) : localStorage.removeItem("lichessToken"); } catch(e){}
   $("tok").textContent = token ? "Token saved" : "Lichess token";
-  apiDown = false; cache.clear(); $("offline").hidden = true;
+  apiDown = false; cache.clear(); reachBy.clear(); $("offline").hidden = true;
   refreshPosition();
 };
 $("retry").onclick = () => {
-  apiDown = false; cache.clear();
+  apiDown = false; cache.clear(); reachBy.clear();
   $("offline").hidden = true;
   $("retry").textContent = "Checking…";
   refreshPosition().then(() => {
@@ -1435,7 +1525,7 @@ $("retry").onclick = () => {
 async function refreshPosition(){
   const line = game;
   busy = true; book = null; renderCands();
-  const data = await getBook(game.fen());
+  const data = await lookUp(game.fen());
   if (game !== line){ busy = false; return; }     // the line changed under us
   book = data;
   absorbOpening(book); renderRibbon(); renderCands();
@@ -1443,18 +1533,44 @@ async function refreshPosition(){
   /* never move for the coach while the board is showing an earlier position */
   if (coachMode && reviewPly === null && game.turn() !== userColor && !game.game_over()) step();
 }
-function newGame(){
-  game = new Chess();
+/* Starting a game and picking one back up are the same act: point everything
+   at a game object and let the panels describe whatever position it is at. */
+function startFrom(g){
+  game = g;
   exitReview(); hideTip();
   evalByPly = []; openByPly = []; vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
+  saveSession();
   $("note").textContent = ""; draw(); renderMoves(); renderRibbon(); updateEval();
-  refreshPosition();
+  /* a game picked back up after it ended still knows how it ended */
+  if (game.game_over()) finish();
+  refreshPosition();          // and the coach moves from here if it is its turn
+}
+function newGame(){ startFrom(new Chess()); }
+/* A PGN chess.js will not read is dropped rather than argued with: a new game
+   is a better answer than half of an old one. */
+function restoreGame(pgn){
+  if (!pgn) return false;
+  const g = new Chess();
+  if (!g.load_pgn(pgn)) return false;
+  startFrom(g);
+  return true;
 }
 
 if (token) $("tok").textContent = "Token saved";
 pools = storedPools() || DEFAULT_POOLS.slice(); renderChips();
-setPanel(true);
+/* The flags are set before the UI is painted from them, rather than run
+   through setCoach/setVariety: those two are for a person changing their mind
+   mid-game, and setCoach would hand the opening move to the coach here, on a
+   board the stored game has not been laid out on yet. */
+const saved = loadSession();
+if (saved){
+  if (saved.side === "w" || saved.side === "b") userColor = saved.side;
+  coachMode = saved.coach !== false;
+  variety = !!saved.vary;
+}
+syncToggleUI();
+setPanel(!saved || saved.panel !== false);
 draw();
-newGame();
+if (!(saved && restoreGame(saved.pgn))) newGame();

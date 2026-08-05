@@ -210,6 +210,10 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:1px;margin-right:4px;vertical-align:-1px}
 .sw-w{background:#e6e9ea}.sw-d{background:#6b7d8a}.sw-b{background:#2b3742}
 
+/* the crowd an answer came from, when the explorer had to reach past yours */
+.reach{font-size:11px;color:var(--dim);margin-bottom:9px;line-height:1.45}
+.reach b{color:var(--gold);font-weight:400}
+
 /* the nudge that appears when the selected pools barely cover a position */
 .thin{margin-top:10px;font-size:11px;color:var(--dim)}
 .link{background:none;border:0;padding:0;font-size:11px;color:var(--gold);
@@ -298,6 +302,7 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
   .mv .san{font-size:16.5px;min-width:58px}
   .mv .pct{font-size:14.5px;min-width:50px}
   .mv .n{font-size:11.5px}
+  .reach{font-size:12px}
   .bar{height:6px}
   .freq{height:3px}
   .legend{font-size:11px}
