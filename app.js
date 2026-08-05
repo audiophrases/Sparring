@@ -1308,21 +1308,35 @@ function rememberPools(){
    true when you come back — which side you are playing, whether the coach and
    variety are on, whether the panel is open, and the game itself as a PGN,
    which is all chess.js needs to be the same game again.
-   The per-ply evals and ratings are deliberately not kept: they are analysis
-   of the game rather than the game, and the engine fills them back in from
-   the position you return to. */
+   The per-ply evals travel with it. They are analysis rather than the game,
+   but the engine only ever looks at the position in front of it — it never
+   goes back over moves already played — so without them a game picked back up
+   loses every rating mark it had earned, and each of its tips sits on
+   "Evaluating…" waiting for a search that is never coming. */
 const SESSION_KEY = "session";
 function saveSession(){
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       side: userColor, coach: coachMode, vary: variety,
-      panel: panelOpen, pgn: game.pgn()
+      panel: panelOpen, pgn: game.pgn(), evals: evalByPly
     }));
   } catch(e){}
 }
 function loadSession(){
   try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); }
   catch(e){ return null; }
+}
+/* Evals come back through a sieve. They are read as arithmetic — into the bar,
+   into the cost of a move, into the resilience behind its mark — so a record
+   from an older shape of this file, or one edited by hand, would surface as a
+   NaN drawn on the bar rather than as anything that announces itself. A record
+   that is not four sound numbers is dropped, and a dropped ply reads as one
+   the engine never reached, which is a state everything here already knows. */
+function cleanEvals(raw, plies){
+  if (!Array.isArray(raw)) return [];
+  const num = v => typeof v === "number" && isFinite(v);
+  return raw.slice(0, plies + 1).map(e =>
+    e && num(e.best) && num(e.white) && num(e.res) && num(e.legal) ? e : null);
 }
 /* The rating range actually covered, not the list of floors: picking 1000
    through 1600 reaches games averaging up to 1799, and saying "1000–1600"
@@ -1380,6 +1394,7 @@ function widenPool(){ setPools(widerThan(pools)); }
    the sacrifice three moves from now was sound. */
 function recordEval(ply, data){
   evalByPly[ply] = data;
+  saveSession();          // the move was saved before its eval existed
   renderMoves();
   syncEvalBar();
   /* a tip open on the bar was showing "still evaluating"; fill it in */
@@ -1562,10 +1577,10 @@ async function refreshPosition(){
 }
 /* Starting a game and picking one back up are the same act: point everything
    at a game object and let the panels describe whatever position it is at. */
-function startFrom(g){
+function startFrom(g, evals){
   game = g;
   exitReview(); hideTip();
-  evalByPly = []; openByPly = []; vhCache = {len:-1, list:[]};
+  evalByPly = evals || []; openByPly = []; vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
   lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
   saveSession();
@@ -1577,11 +1592,11 @@ function startFrom(g){
 function newGame(){ startFrom(new Chess()); }
 /* A PGN chess.js will not read is dropped rather than argued with: a new game
    is a better answer than half of an old one. */
-function restoreGame(pgn){
+function restoreGame(pgn, evals){
   if (!pgn) return false;
   const g = new Chess();
   if (!g.load_pgn(pgn)) return false;
-  startFrom(g);
+  startFrom(g, cleanEvals(evals, g.history().length));
   return true;
 }
 
@@ -1600,4 +1615,4 @@ if (saved){
 syncToggleUI();
 setPanel(!saved || saved.panel !== false);
 draw();
-if (!(saved && restoreGame(saved.pgn))) newGame();
+if (!(saved && restoreGame(saved.pgn, saved.evals))) newGame();
