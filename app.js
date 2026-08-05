@@ -610,10 +610,11 @@ async function getBook(fen, list){
 
 /* The pools are a difficulty setting, not a search radius. So when a position
    has run past the ones you picked, the sample is widened for that one lookup
-   rather than for good — a band at a time, so the answer comes from the
-   closest crowd that has actually been here — and your chips are left exactly
-   where you put them. Only when every band has been asked is the position
-   really unplayed, and only then does the coach have to calculate instead.
+   rather than for good, and your chips are left exactly where you put them.
+   Widening goes straight to every band in one step rather than creeping out a
+   band at a time: the answer is a little less close to your level, but it
+   arrives after one extra request instead of up to five, and off the book
+   that wait is the coach standing still. Two requests, then the engine.
    What comes back is tagged with the set that answered, so the panel can say
    whose games these are and review can find them again in the cache. */
 const reachBy = new Map();            // fen -> the pool set that answered it
@@ -624,8 +625,8 @@ const poolsOf = d => d && d.pools ? d.pools.split(",").map(Number) : null;
 async function lookUp(fen){
   let list = pools.slice();
   let data = await getBook(fen, list);
-  while (!hasMoves(data) && !apiDown && list.length < BUCKETS.length){
-    list = widerThan(list);
+  if (!hasMoves(data) && !apiDown && list.length < BUCKETS.length){
+    list = BUCKETS.slice();       // the whole database, in one more request
     data = await getBook(fen, list);
   }
   const param = poolParam(list);
