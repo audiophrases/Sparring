@@ -213,6 +213,7 @@ let coachMode = true;  // false = free play, you move both sides
 let pending = null;       // promotion pending {from,to,color}
 let pools = [];           // selected Lichess rating buckets
 let variety = false;      // false = the coach always plays the most popular reply
+let showBest = false;     // the engine's two best moves, under the bar
 /* Review: the board shows an earlier position while `game` stays at the live
    one, so stepping back and forth costs nothing and never rewrites the game.
    reviewPly is the number of plies shown; null means we are on the live move. */
@@ -249,6 +250,7 @@ const MAX_BOARD = 720, MIN_BOARD = 192;
    list and the controls sit under the board instead of beside it, so the old
    roomier reserve stays and that layout comes out unchanged. */
 const CHROME_WIDE = 120, CHROME_STACKED = 180;
+const BEST_ROW = 26;                 // the Best line, when it is showing
 /* the panel's width and the column gap are declared in the stylesheet; read
    them back rather than repeating the numbers here, where they could drift */
 const cssPx = n => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)) || 0;
@@ -264,7 +266,10 @@ function sizeBoard(){
   const pad = getComputedStyle(document.body);
   const room = document.body.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
   const beside = (narrow.matches || !panelOpen) ? 0 : cssPx("--panelw") + cssPx("--colgap");
-  const fitsHeight = Math.max(280, window.innerHeight - (narrow.matches ? CHROME_STACKED : CHROME_WIDE));
+  /* the Best line lands under the bar, so the board gives up its height while
+     it is on — a line you have to scroll to is not showing you anything */
+  const reserve = (narrow.matches ? CHROME_STACKED : CHROME_WIDE) + (showBest ? BEST_ROW : 0);
+  const fitsHeight = Math.max(280, window.innerHeight - reserve);
   const raw = Math.min(room - beside, MAX_BOARD, fitsHeight);
   const size = Math.max(MIN_BOARD, Math.floor(raw / 8) * 8);
   if (size === boardSize) return;
@@ -929,6 +934,10 @@ function showTip(el, pin){
   if (!html) return;
   tipPly = n; tipEval = false;
   openTip(el, html, pin);
+  /* "Evaluating…" is a claim about a search; if none is running, start one, and
+     the recordEval that ends it re-renders the list — which re-anchors this
+     tip onto its own answer */
+  if (!rateMove(n)) fillEvals([n-1, n]);
 }
 function showEvalTip(pin){
   tipPly = null; tipEval = true;
@@ -1193,12 +1202,16 @@ function paintPly(ply){
             leader === turn ? leader : null,          // thin only for the side to move
             Math.min(1, Math.max(RES_MIN, e.res / RES_FULL)));
 }
-function syncEvalBar(){ paintPly(viewedPly()); }
+function syncEvalBar(){ paintPly(viewedPly()); renderBest(); }
 
-async function updateEval(){
+/* The one search behind everything the engine says: the bar, the rating on a
+   played move, and the two best replies. `live` marks the search for the
+   position the game is actually at — the only one allowed to paint the bar
+   mid-thought, since a review is looking at a ply that already has its answer. */
+async function updateEval(){ return runEval(game.history().length, game.fen(), true); }
+async function runEval(ply, fen, live){
   const mine = ++evalToken;
-  const ply = game.history().length;
-  const g = new Chess(game.fen());
+  const g = new Chess(fen);
 
   if (g.game_over()){
     /* a mated side is worth -99000 to itself; a draw is worth nothing to
@@ -1214,9 +1227,10 @@ async function updateEval(){
     return;
   }
 
-  /* only the live position may show a search in progress; a review is looking
-     at a ply that already has its answer */
-  if (reviewPly === null) paintEval(evalPct, "…", evalThinSide, evalThick, true);
+  if (live && reviewPly === null){
+    paintEval(evalPct, "…", evalThinSide, evalThick, true);
+    renderBest();                       // the old position's answers are not this one's
+  }
   await sleep(0);                       // let the move render before we search
   if (mine !== evalToken) return;
 
@@ -1272,8 +1286,65 @@ async function updateEval(){
      applies that, along with the label and the width, from the record below.
      ms is sorted best-first by the resilience pass, so ms[0] is this side's
      best reply — kept to spot a plain recapture when rating the move before. */
+  /* The top of that same list, kept because it costs nothing: every move here
+     was searched to find `best`, so the two that came out ahead are already in
+     hand. Scores are turned to White's point of view, like the bar, so a line
+     of them reads the same way whoever is to move. */
+  const side = g.turn() === "w" ? 1 : -1;
   recordEval(ply, {best, white, res: resilience, legal: ms.length, capped, over: null,
-                   bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || ""))});
+                   bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || "")),
+                   top: ms.slice(0, 2).map(m => ({san: m.san, cp: side * m._v}))});
+}
+
+/* ===================== filling in a ply the engine never saw =====================
+   The engine only ever looks at the position in front of it, so a ply it never
+   reached — one restored from a session older than stored evals, or a record
+   dropped as unsound — had a tip that said "Evaluating…" forever, waiting on a
+   search nobody had started. Opening that tip starts it. Rating a move needs
+   the record on both sides of it, so both are filled, one at a time: each
+   search cancels the one before it, and running them together would leave the
+   pair permanently incomplete. */
+function fenAtPly(n){
+  const g = new Chess(), h = game.history();
+  for (let i = 0; i < n && i < h.length; i++) g.move(h[i]);
+  return g.fen();
+}
+let backfilling = false;
+async function fillEvals(plies){
+  if (backfilling) return;
+  backfilling = true;
+  try {
+    for (const k of plies){
+      if (k < 0 || k > game.history().length || evalByPly[k]) continue;
+      await runEval(k, fenAtPly(k), false);
+      if (!evalByPly[k]) break;      // cancelled by a newer search; do not fight it
+    }
+  } finally {
+    backfilling = false;
+    /* whatever this cancelled might have been the live position's own search */
+    if (!evalByPly[game.history().length]) updateEval();
+  }
+}
+
+/* The engine's own two answers for the position on the board, on a toggle,
+   because a coach that always shows you the move is not sparring. */
+function renderBest(){
+  const el = $("bestline");
+  el.hidden = !showBest;
+  if (!showBest) return;
+  const n = viewedPly(), e = evalByPly[n];
+  const lab = '<span class="lab">Best</span>';
+  if (!e){
+    el.innerHTML = lab + '<span class="ob">searching…</span>';
+    /* the live ply has a search of its own coming either way; anything earlier
+       is a ply the engine never reached, and asking is the only way it will */
+    if (n !== game.history().length) fillEvals([n]);
+    return;
+  }
+  if (e.over){ el.innerHTML = lab + '<span class="ob">the game is over</span>'; return; }
+  if (!e.top || !e.top.length){ el.innerHTML = lab + '<span class="ob">—</span>'; return; }
+  el.innerHTML = lab + e.top.map(m =>
+    '<span class="bm"><b>' + m.san + '</b><i>' + cpLabel(m.cp) + '</i></span>').join("");
 }
 
 /* ============================ pools ============================
@@ -1308,17 +1379,18 @@ function rememberPools(){
    true when you come back — which side you are playing, whether the coach and
    variety are on, whether the panel is open, and the game itself as a PGN,
    which is all chess.js needs to be the same game again.
-   The per-ply evals travel with it. They are analysis rather than the game,
-   but the engine only ever looks at the position in front of it — it never
-   goes back over moves already played — so without them a game picked back up
-   loses every rating mark it had earned, and each of its tips sits on
-   "Evaluating…" waiting for a search that is never coming. */
+   The two per-ply records travel with it. They are made as the game is played
+   and never remade: the engine only ever looks at the position in front of it,
+   and the opening line is read off the explorer reply for the position being
+   asked about. Left behind, a game picked back up loses every rating mark it
+   had earned, and every ply before the one you returned to loses the name of
+   the line it was in. */
 const SESSION_KEY = "session";
 function saveSession(){
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      side: userColor, coach: coachMode, vary: variety,
-      panel: panelOpen, pgn: game.pgn(), evals: evalByPly
+      side: userColor, coach: coachMode, vary: variety, best: showBest,
+      panel: panelOpen, pgn: game.pgn(), evals: evalByPly, opens: openByPly
     }));
   } catch(e){}
 }
@@ -1337,6 +1409,16 @@ function cleanEvals(raw, plies){
   const num = v => typeof v === "number" && isFinite(v);
   return raw.slice(0, plies + 1).map(e =>
     e && num(e.best) && num(e.white) && num(e.res) && num(e.legal) ? e : null);
+}
+/* Openings get the same treatment for the same reason, though what they feed
+   is the ribbon rather than arithmetic: a record has to carry the ply its line
+   was named at, since the ribbon counts moves from it. */
+function cleanOpens(raw, plies){
+  if (!Array.isArray(raw)) return [];
+  const str = v => v === null || v === undefined || typeof v === "string";
+  return raw.slice(0, plies + 1).map(o =>
+    o && typeof o === "object" && typeof o.namedAt === "number" && isFinite(o.namedAt)
+      && str(o.name) && str(o.eco) && str(o.fen) ? o : null);
 }
 /* The rating range actually covered, not the list of floors: picking 1000
    through 1600 reaches games averaging up to 1799, and saying "1000–1600"
@@ -1365,9 +1447,6 @@ function renderChips(){
     b.onclick = () => setPools(pools.includes(v) ? pools.filter(x => x !== v) : pools.concat(v));
     box.appendChild(b);
   });
-  $("widen").disabled = pools.length >= BUCKETS.length;
-  $("poolreset").disabled = pools.length === DEFAULT_POOLS.length
-    && DEFAULT_POOLS.every((v,i) => v === pools[i]);
 }
 function setPools(next){
   const sorted = BUCKETS.filter(v => next.includes(v));
@@ -1452,8 +1531,6 @@ function rateMove(n){                        // n = 1-based ply
 }
 
 /* ============================ controls ============================ */
-$("widen").onclick = widenPool;
-$("poolreset").onclick = () => setPools(DEFAULT_POOLS);
 $("newg").onclick = newGame;
 
 /* Flipping turns the board round and swaps sides with it: the colour you were
@@ -1494,6 +1571,8 @@ function syncToggleUI(){
   $("coach").textContent = coachMode ? "Coach: On" : "Coach: Off";
   $("vary").classList.toggle("on", variety);
   $("vary").textContent = variety ? "Variety: On" : "Variety: Off";
+  $("best").classList.toggle("on", showBest);
+  $("best").textContent = showBest ? "Best: On" : "Best: Off";
 }
 function setCoach(v){
   coachMode = v;
@@ -1512,6 +1591,13 @@ function setVariety(v){
   renderCands();                    // the in-play marks appear or clear with it
 }
 $("vary").onclick = () => setVariety(!variety);
+function setBest(v){
+  showBest = v;
+  syncToggleUI(); saveSession();
+  renderBest();
+  sizeBoard();                 // the line takes its height from the board
+}
+$("best").onclick = () => setBest(!showBest);
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
@@ -1522,8 +1608,9 @@ function syncNav(){
   $("next").disabled = reviewPly === null;
 }
 
-/* keyboard: arrows review the game, C the coach, V variety, F swaps sides.
-   Ignored while a text control has focus, so typing never moves the board. */
+/* keyboard: arrows review the game, C the coach, V variety, B the engine's
+   best, F swaps sides. Ignored while a text control has focus, so typing
+   never moves the board. */
 document.addEventListener("keydown", e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
@@ -1537,6 +1624,7 @@ document.addEventListener("keydown", e => {
     case "End":        e.preventDefault(); gotoPly(n); break;
     case "c": case "C": e.preventDefault(); setCoach(!coachMode); break;
     case "v": case "V": e.preventDefault(); setVariety(!variety); break;
+    case "b": case "B": e.preventDefault(); setBest(!showBest); break;
     case "f": case "F": e.preventDefault(); flip(); break;
   }
 });
@@ -1577,12 +1665,21 @@ async function refreshPosition(){
 }
 /* Starting a game and picking one back up are the same act: point everything
    at a game object and let the panels describe whatever position it is at. */
-function startFrom(g, evals){
+function startFrom(g, kept){
   game = g;
   exitReview(); hideTip();
-  evalByPly = evals || []; openByPly = []; vhCache = {len:-1, list:[]};
+  evalByPly = (kept && kept.evals) || [];
+  openByPly = (kept && kept.opens) || [];
+  vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
-  lastName = null; lastEco = null; bookPlies = 0; outOfBook = false;
+  /* the opening state is whatever the deepest surviving record says it is —
+     the same reading branchAt does, and for the same reason: these four
+     describe the line the game is in, and the records are what remember it */
+  const rec = openingAt(g.history().length);
+  lastName = rec ? rec.name : null;
+  lastEco = rec ? rec.eco : null;
+  bookPlies = rec ? rec.namedAt : 0;
+  outOfBook = rec ? !!rec.out : false;
   saveSession();
   $("note").textContent = ""; draw(); renderMoves(); renderRibbon(); updateEval();
   /* a game picked back up after it ended still knows how it ended */
@@ -1592,11 +1689,12 @@ function startFrom(g, evals){
 function newGame(){ startFrom(new Chess()); }
 /* A PGN chess.js will not read is dropped rather than argued with: a new game
    is a better answer than half of an old one. */
-function restoreGame(pgn, evals){
-  if (!pgn) return false;
+function restoreGame(saved){
+  if (!saved || !saved.pgn) return false;
   const g = new Chess();
-  if (!g.load_pgn(pgn)) return false;
-  startFrom(g, cleanEvals(evals, g.history().length));
+  if (!g.load_pgn(saved.pgn)) return false;
+  const plies = g.history().length;
+  startFrom(g, {evals: cleanEvals(saved.evals, plies), opens: cleanOpens(saved.opens, plies)});
   return true;
 }
 
@@ -1611,8 +1709,9 @@ if (saved){
   if (saved.side === "w" || saved.side === "b") userColor = saved.side;
   coachMode = saved.coach !== false;
   variety = !!saved.vary;
+  showBest = !!saved.best;
 }
 syncToggleUI();
 setPanel(!saved || saved.panel !== false);
 draw();
-if (!(saved && restoreGame(saved.pgn, saved.evals))) newGame();
+if (!restoreGame(saved)) newGame();

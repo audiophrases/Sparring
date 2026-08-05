@@ -157,6 +157,13 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
   padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap;z-index:2}
 .evalbar.think .val{color:var(--dim)}
 
+/* the engine's own two answers, under the bar it draws */
+.best{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 14px;margin-top:8px;font-size:12px}
+.best .lab{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.best .bm b{font-weight:400;color:var(--text)}
+.best .bm i{font-style:normal;color:var(--gold);margin-left:6px}
+.best .ob{color:var(--dim)}
+
 /* controls */
 .ctl{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
 button{font-family:var(--mono);font-size:12.5px;color:var(--text);
@@ -292,6 +299,8 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 
   .evalbar{height:30px}
   .evalbar .val{font-size:12px}
+  .best{font-size:13px}
+  .best .lab{font-size:11px}
 
   .card{padding:15px 16px}
   .card h2{font-size:11px}
