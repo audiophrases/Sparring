@@ -250,7 +250,6 @@ const MAX_BOARD = 720, MIN_BOARD = 192;
    list and the controls sit under the board instead of beside it, so the old
    roomier reserve stays and that layout comes out unchanged. */
 const CHROME_WIDE = 120, CHROME_STACKED = 180;
-const BEST_ROW = 26;                 // the Best line, when it is showing
 /* the panel's width and the column gap are declared in the stylesheet; read
    them back rather than repeating the numbers here, where they could drift */
 const cssPx = n => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)) || 0;
@@ -266,10 +265,7 @@ function sizeBoard(){
   const pad = getComputedStyle(document.body);
   const room = document.body.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
   const beside = (narrow.matches || !panelOpen) ? 0 : cssPx("--panelw") + cssPx("--colgap");
-  /* the Best line lands under the bar, so the board gives up its height while
-     it is on — a line you have to scroll to is not showing you anything */
-  const reserve = (narrow.matches ? CHROME_STACKED : CHROME_WIDE) + (showBest ? BEST_ROW : 0);
-  const fitsHeight = Math.max(280, window.innerHeight - reserve);
+  const fitsHeight = Math.max(280, window.innerHeight - (narrow.matches ? CHROME_STACKED : CHROME_WIDE));
   const raw = Math.min(room - beside, MAX_BOARD, fitsHeight);
   const size = Math.max(MIN_BOARD, Math.floor(raw / 8) * 8);
   if (size === boardSize) return;
@@ -317,6 +313,7 @@ function draw(){
     if (df === 0) html += '<span class="co r">' + name[1] + '</span>';
     c.innerHTML = html;
   }
+  renderBest();          // the arrows are drawn over this board, so they follow it
 }
 function findKing(color, g){
   const b = (g || game).board();
@@ -1288,12 +1285,13 @@ async function runEval(ply, fen, live){
      best reply — kept to spot a plain recapture when rating the move before. */
   /* The top of that same list, kept because it costs nothing: every move here
      was searched to find `best`, so the two that came out ahead are already in
-     hand. Scores are turned to White's point of view, like the bar, so a line
-     of them reads the same way whoever is to move. */
+     hand. The squares travel with them, since what they are drawn as is an
+     arrow from one to the other. */
   const side = g.turn() === "w" ? 1 : -1;
   recordEval(ply, {best, white, res: resilience, legal: ms.length, capped, over: null,
                    bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || "")),
-                   top: ms.slice(0, 2).map(m => ({san: m.san, cp: side * m._v}))});
+                   top: ms.slice(0, 2).map(m => ({san: m.san, cp: side * m._v,
+                                                  from: m.from, to: m.to}))});
 }
 
 /* ===================== filling in a ply the engine never saw =====================
@@ -1327,24 +1325,63 @@ async function fillEvals(plies){
 }
 
 /* The engine's own two answers for the position on the board, on a toggle,
-   because a coach that always shows you the move is not sparring. */
+   because a coach that always shows you the move is not sparring. They are
+   drawn on the board itself: a move is a thing that goes from one square to
+   another, and naming it in a list somewhere makes you find that on the board
+   yourself. The overlay is measured in squares — the viewBox is 8 by 8 — so it
+   scales with the board and never has to be redrawn for a resize. */
+const ARROW = {tail:0.30, tip:0.10, head:0.34, wide:0.20};
+function squareCenter(name){
+  let f = FILES.indexOf(name[0]), r = 8 - Number(name[1]);
+  if (f < 0 || !(r >= 0 && r <= 7)) return null;
+  if (userColor === "b"){ r = 7 - r; f = 7 - f; }
+  return {x: f + 0.5, y: r + 0.5};
+}
+function arrowSvg(from, to, cls){
+  const a = squareCenter(from), b = squareCenter(to);
+  if (!a || !b) return "";
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (!len) return "";
+  const ux = dx/len, uy = dy/len;                     // along the move
+  const px = -uy, py = ux;                            // across it
+  const sx = a.x + ux*ARROW.tail, sy = a.y + uy*ARROW.tail;
+  const tx = b.x - ux*ARROW.tip,  ty = b.y - uy*ARROW.tip;
+  const bx = tx - ux*ARROW.head,  by = ty - uy*ARROW.head;
+  const pt = (x,y) => x.toFixed(3) + "," + y.toFixed(3);
+  return '<g class="' + cls + '">'
+    + '<line x1="' + sx.toFixed(3) + '" y1="' + sy.toFixed(3)
+    + '" x2="' + bx.toFixed(3) + '" y2="' + by.toFixed(3) + '"/>'
+    + '<polygon points="' + pt(tx,ty) + " "
+    + pt(bx + px*ARROW.wide, by + py*ARROW.wide) + " "
+    + pt(bx - px*ARROW.wide, by - py*ARROW.wide) + '"/></g>';
+}
 function renderBest(){
-  const el = $("bestline");
-  el.hidden = !showBest;
+  const svg = $("arrows");
+  svg.innerHTML = "";
   if (!showBest) return;
   const n = viewedPly(), e = evalByPly[n];
-  const lab = '<span class="lab">Best</span>';
   if (!e){
-    el.innerHTML = lab + '<span class="ob">searching…</span>';
     /* the live ply has a search of its own coming either way; anything earlier
        is a ply the engine never reached, and asking is the only way it will */
     if (n !== game.history().length) fillEvals([n]);
     return;
   }
-  if (e.over){ el.innerHTML = lab + '<span class="ob">the game is over</span>'; return; }
-  if (!e.top || !e.top.length){ el.innerHTML = lab + '<span class="ob">—</span>'; return; }
-  el.innerHTML = lab + e.top.map(m =>
-    '<span class="bm"><b>' + m.san + '</b><i>' + cpLabel(m.cp) + '</i></span>').join("");
+  if (e.over || !e.top || !e.top.length) return;
+  /* records written before the arrows existed name the move without saying
+     where it goes, so the square is read back off the position */
+  let board = null;
+  const squares = m => {
+    if (m.from && m.to) return m;
+    if (!board) board = new Chess(fenAtPly(n));
+    const mv = board.move(m.san);
+    if (!mv) return null;
+    board.undo();
+    return mv;
+  };
+  /* second first, so the better move is drawn over it where they cross */
+  svg.innerHTML = e.top.slice(0, 2).map(squares).map((m, i) =>
+    m ? arrowSvg(m.from, m.to, i ? "a2" : "a1") : "").reverse().join("");
 }
 
 /* ============================ pools ============================
@@ -1595,7 +1632,6 @@ function setBest(v){
   showBest = v;
   syncToggleUI(); saveSession();
   renderBest();
-  sizeBoard();                 // the line takes its height from the board
 }
 $("best").onclick = () => setBest(!showBest);
 

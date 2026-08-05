@@ -124,6 +124,17 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 .sq.sel::before{content:"";position:absolute;inset:0;background:var(--hl-strong);box-shadow:none}
 .sq.chk::before{content:"";position:absolute;inset:0;box-shadow:none;
   background:radial-gradient(circle,rgba(214,72,60,.9),rgba(214,72,60,0) 72%)}
+/* the engine's two best moves, over the board rather than named beside it.
+   Teal is the one colour on the board that is not already saying something:
+   yellow is the move just played, gold the one before it, red a king in check.
+   Rounded ends so an arrow reads as drawn on rather than built in. */
+.arrows{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+.arrows line{stroke:var(--teal);stroke-width:.15;stroke-linecap:round}
+.arrows polygon{fill:var(--teal)}
+.arrows .a1{opacity:.9}
+/* the second choice, plainly the second: thinner, and further back */
+.arrows .a2{opacity:.45}
+.arrows .a2 line{stroke-width:.1}
 .dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:28%;height:28%;border-radius:50%;background:rgba(20,27,36,.22)}
 .ring{position:absolute;inset:0;border-radius:50%;
@@ -156,13 +167,6 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
   background:rgba(20,27,36,.86);color:var(--text);border-radius:2px;
   padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap;z-index:2}
 .evalbar.think .val{color:var(--dim)}
-
-/* the engine's own two answers, under the bar it draws */
-.best{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 14px;margin-top:8px;font-size:12px}
-.best .lab{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
-.best .bm b{font-weight:400;color:var(--text)}
-.best .bm i{font-style:normal;color:var(--gold);margin-left:6px}
-.best .ob{color:var(--dim)}
 
 /* controls */
 .ctl{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
@@ -299,8 +303,6 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 
   .evalbar{height:30px}
   .evalbar .val{font-size:12px}
-  .best{font-size:13px}
-  .best .lab{font-size:11px}
 
   .card{padding:15px 16px}
   .card h2{font-size:11px}
