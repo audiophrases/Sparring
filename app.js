@@ -791,10 +791,18 @@ function renderMoves(){
     if (h[i+1]) out += ply(i+1) + " ";
   }
   /* scrolled by hand rather than with scrollIntoView, which also nudges the
-     inline axis and the page around it */
+     inline axis and the page around it. The move it scrolls to is often the
+     one you just tapped, whose tip is about to be re-anchored below — so the
+     scroll is claimed, or the scroll handler would take that tip for a reader
+     scrolling away from it and close it. Claimed by reading back what the
+     assignment actually did rather than what it asked for: a list too short to
+     scroll, or already where it wants to be, does not move and fires no event,
+     and a claim left standing would swallow the reader's next real scroll. */
   const m = $("moves"); m.innerHTML = out;
   const cur = m.querySelector(".cur");
+  const before = m.scrollTop;
   m.scrollTop = cur ? Math.max(0, cur.offsetTop - m.clientHeight / 2) : m.scrollHeight;
+  selfScroll = m.scrollTop !== before;
   /* the element the tip was anchored to has just been replaced; re-anchor so a
      rating that lands while you are reading it fills itself in */
   if (tipPly !== null){
@@ -907,6 +915,7 @@ function evalTipHtml(){
    in. A pinned tip ignores mouseout and is dismissed by tapping its source
    again or anywhere else. One panel serves both the move list and the bar. */
 let tipPly = null, tipEval = false, tipPinned = false;
+let selfScroll = false;          // the move list scrolled itself, see renderMoves
 function openTip(anchor, html, pin){
   if (!html) return;
   tipEl.innerHTML = html;
@@ -934,11 +943,23 @@ $("moves").addEventListener("mouseover", e => {
 $("moves").addEventListener("mouseout", e => {
   if (e.target.closest("b[data-ply]") && !tipPinned) hideTip();
 });
+/* A move in the list is the position after it, so clicking one goes there —
+   the same review the arrow keys do, reached by pointing at it. The tip is
+   pinned first and the board moved second: the jump rebuilds the list, and
+   re-anchoring the tip onto the element that replaces this one is something
+   renderMoves already knows how to do. */
 $("moves").addEventListener("click", e => {
   const b = e.target.closest("b[data-ply]");
   if (!b) return;
-  if (tipPinned && tipPly === +b.dataset.ply) hideTip();
+  const n = +b.dataset.ply;
+  /* the click stops here. It would otherwise reach the dismiss-on-click-away
+     handler below, which asks whether the click landed inside the move list —
+     and by then the jump has rebuilt the list, leaving the element it landed
+     on detached from the document and that question unanswerable. */
+  e.stopPropagation();
+  if (tipPinned && tipPly === n) hideTip();
   else showTip(b, true);
+  gotoPly(n);
 });
 $("evalbar").addEventListener("mouseover", () => { if (!tipPinned) showEvalTip(false); });
 $("evalbar").addEventListener("mouseout", () => { if (!tipPinned) hideTip(); });
@@ -950,7 +971,12 @@ $("evalbar").addEventListener("blur", () => { if (!tipPinned) hideTip(); });
 document.addEventListener("click", e => {
   if (tipPinned && !e.target.closest("#moves, #evalbar")) hideTip();
 });
-$("moves").addEventListener("scroll", hideTip);
+/* a tip belongs to the move under it; scrolling the list away from that move
+   drops it — unless the list was scrolled by the render that placed it */
+$("moves").addEventListener("scroll", () => {
+  if (selfScroll){ selfScroll = false; return; }
+  hideTip();
+});
 window.addEventListener("blur", hideTip);
 
 /* ============================ fallback engine ============================ */

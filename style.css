@@ -232,7 +232,8 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 .moves b.recent{background:rgba(247,247,105,.15);border-radius:2px;padding:0 4px;margin:0 3px 0 -4px}
 .moves b.older{background:rgba(247,247,105,.07);border-radius:2px;padding:0 4px;margin:0 3px 0 -4px}
 .moves .ob{color:var(--dim)}
-.moves b[data-ply]{cursor:help}
+/* a move is a place to go, not just something to read about */
+.moves b[data-ply]{cursor:pointer}
 
 /* move marks: only the notable ones are drawn, so a clean game stays clean */
 .moves b i{font-style:normal;font-size:11px;margin-left:1px;vertical-align:.08em}
