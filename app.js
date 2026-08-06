@@ -1749,7 +1749,7 @@ const SESSION_KEY = "session";
 function saveSession(){
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      side: userColor, coach: coachMode, vary: variety, best: showBest,
+      side: userColor, coach: coachMode, vary: variety,
       panel: panelOpen, pgn: game.pgn(), evals: evalByPly, opens: openByPly
     }));
   } catch(e){}
@@ -1983,7 +1983,9 @@ $("best").onclick = () => setBest(!showBest);
    ration a search that cost seconds, and Stockfish finds the same two moves
    inside the search every ply gets anyway — but the habit is worth more than
    the saving: a hint you have to reach for is one you noticed you needed, and
-   a coach that leaves the answer on the board between moves is not sparring. */
+   a coach that leaves the answer on the board between moves is not sparring.
+   Which is why it is not remembered across sessions either: reloading is
+   another way of arriving at a position without having asked about it. */
 function bestExpires(){ if (showBest) setBest(false); }
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
@@ -2059,6 +2061,7 @@ function startFrom(g, kept){
   openByPly = (kept && kept.opens) || [];
   vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
+  bestExpires();              // a new game is a new position: ask again for it
   rebuildOpenings();          // fill any gap the records came back with
   /* the opening state is whatever the deepest surviving record says it is —
      the same reading branchAt does, and for the same reason: these four
@@ -2110,7 +2113,9 @@ if (saved){
   if (saved.side === "w" || saved.side === "b") userColor = saved.side;
   coachMode = saved.coach !== false;
   variety = !!saved.vary;
-  showBest = !!saved.best;
+  /* Best is not among these: it is asked for a position, not set as a
+     preference, so a session picked back up starts without it — see
+     bestExpires. Older sessions may still carry the flag; it is ignored. */
 }
 syncToggleUI();
 setPanel(!saved || saved.panel !== false);
