@@ -679,6 +679,31 @@ function absorbOpening(data){
   openByPly[hist.length] = {name: lastName, eco: lastEco, namedAt: bookPlies,
                             out: outOfBook, fen: game.fen()};
 }
+/* A game can come back without the records that name its line: from a session
+   saved before they were kept, or one where the explorer never answered a
+   single position. Most of it is recoverable without asking anyone — the local
+   table absorbOpening already falls back to knows the common lines, and the
+   deepest prefix of the game that appears in it is the line that ply was in.
+   A kept record always wins; this only fills the gaps, and the live lookup for
+   the position on the board corrects whatever it gets wrong there. */
+function rebuildOpenings(){
+  const h = game.history();
+  let name = null, eco = null, at = 0;
+  for (let i = 0; i <= h.length; i++){
+    const rec = openByPly[i];
+    if (rec && rec.name){ name = rec.name; eco = rec.eco; at = rec.namedAt; continue; }
+    for (let n = Math.min(i, 12); n > 0; n--){
+      const k = h.slice(0, n).join(" ");
+      if (LOCAL_ECO[k]){ eco = LOCAL_ECO[k][0]; name = LOCAL_ECO[k][1]; at = n; break; }
+    }
+    /* a record with no name in it is as much a gap as no record at all — the
+       explorer answers plenty of positions without naming the line */
+    if (name && (!rec || !rec.name)){
+      openByPly[i] = rec ? Object.assign({}, rec, {name, eco, namedAt: at})
+                         : {name, eco, namedAt: at, out: false, fen: null};
+    }
+  }
+}
 /* the deepest record at or before a ply is the one that names the position
    there: plies played out of book leave no record of their own */
 function openingAt(n){
@@ -2034,6 +2059,7 @@ function startFrom(g, kept){
   openByPly = (kept && kept.opens) || [];
   vhCache = {len:-1, list:[]};
   sel = null; legalTargets = []; book = null;
+  rebuildOpenings();          // fill any gap the records came back with
   /* the opening state is whatever the deepest surviving record says it is —
      the same reading branchAt does, and for the same reason: these four
      describe the line the game is in, and the records are what remember it */
