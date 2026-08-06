@@ -454,6 +454,7 @@ function commit(mv){
   if (!m) { sel = null; legalTargets = []; draw(); return; }
   sel = null; legalTargets = [];
   reportUserMove(m, before);
+  bestExpires();
   saveSession();
   draw(); renderMoves(); updateEval();
   step();
@@ -515,6 +516,7 @@ async function step(){
   if (!coachMode || game.turn() === userColor){ busy = false; return; }
   const mv = chooseMove(data);
   game.move(mv);
+  bestExpires();
   saveSession();
   exitReview();          // the reply is the point — snap back to it
   draw(); renderMoves(); updateEval();
@@ -1369,7 +1371,8 @@ async function deepenBest(ply, fen, mine){
       if (spentOut()) return false;
       if (i % EVAL_BATCH === EVAL_BATCH - 1 && i < list.length - 1){
         await sleep(0);
-        if (mine !== evalToken) return null;        // a newer search owns the board
+        /* a newer search owns the board, or the arrows this was for have gone */
+        if (mine !== evalToken || !showBest) return null;
       }
     }
     return true;
@@ -1802,6 +1805,11 @@ function setBest(v){
   renderBest();
 }
 $("best").onclick = () => setBest(!showBest);
+/* Best lasts one position. The arrows are two searches deep and this engine is
+   slow enough to feel them, so they are not worth spending on a position you
+   have already left — and asking again is the better habit anyway: a hint you
+   have to reach for is one you noticed you needed. */
+function bestExpires(){ if (showBest) setBest(false); }
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
