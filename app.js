@@ -224,6 +224,63 @@ try { token = localStorage.getItem("lichessToken") || ""; } catch(e){}
 
 const $ = id => document.getElementById(id);
 
+/* ============================ debug ============================
+   Off unless asked for: put ?debug in the address and it stays on until
+   ?nodebug turns it off again. It answers the one question the board cannot —
+   who answered, how long they took, and what they said — which is the only way
+   to tell a working engine from a silent one now that nothing stands in for it.
+   The log goes to the console and to a panel on the page, because the machine
+   most likely to have trouble starting a worker is a phone, where there is no
+   console to open. */
+const DEBUG = (() => {
+  try {
+    if (/[?&]nodebug\b/.test(location.search)){ localStorage.removeItem("debug"); return false; }
+    if (/[?&]debug\b/.test(location.search)){ localStorage.setItem("debug", "1"); return true; }
+    return !!localStorage.getItem("debug");
+  } catch(e){ return /[?&]debug\b/.test(location.search); }
+})();
+const dbgLog = [];
+const dbgClock = Date.now();
+let dbgBox = null;
+function dbgPanel(){
+  if (dbgBox) return dbgBox;
+  dbgBox = document.createElement("div");
+  dbgBox.className = "dbg";
+  dbgBox.innerHTML = '<div class="dbghead"><b>Debug</b><span id="dbgeng">engine: starting…</span>'
+    + '<button type="button" id="dbgcopy">Copy</button>'
+    + '<button type="button" id="dbgmin" aria-label="Collapse">–</button></div>'
+    + '<pre id="dbgout"></pre>';
+  document.body.appendChild(dbgBox);
+  document.body.classList.add("debugging");
+  $("dbgmin").onclick = () => {
+    dbgBox.classList.toggle("min");
+    $("dbgmin").textContent = dbgBox.classList.contains("min") ? "+" : "–";
+  };
+  $("dbgcopy").onclick = () => {
+    const text = dbgLog.join("\n");
+    const said = ok => { $("dbgcopy").textContent = ok ? "Copied" : "Select it";
+                         setTimeout(() => { $("dbgcopy").textContent = "Copy"; }, 1200); };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => said(true), () => said(false));
+    else said(false);
+  };
+  return dbgBox;
+}
+/* one line per thing that happened, newest at the bottom, capped so a long
+   session cannot grow without end */
+function dbg(what, detail){
+  if (!DEBUG) return;
+  const line = ((Date.now() - dbgClock) / 1000).toFixed(2) + "s  " + what
+    + (detail === undefined ? "" : "  " + (typeof detail === "string" ? detail : JSON.stringify(detail)));
+  dbgLog.push(line);
+  if (dbgLog.length > 400) dbgLog.shift();
+  console.log("[sparring] " + line);
+  const out = dbgPanel().querySelector("#dbgout");
+  out.textContent = dbgLog.join("\n");
+  out.scrollTop = out.scrollHeight;
+}
+/* the standing line at the top: which engine is answering, right now */
+function dbgEngine(text){ if (DEBUG) dbgPanel().querySelector("#dbgeng").textContent = "engine: " + text; }
+
 /* ============================ board ============================ */
 const boardEl = $("board");
 const wrapEl = document.querySelector(".wrap");
@@ -559,13 +616,25 @@ function varietySet(moves){
    thing that ever happens. */
 function chooseMove(data){
   const pool = data && data.moves ? data.moves : [];
-  if (!pool.length){ outOfBook = true; return engineMove(engineCfg()); }
+  if (!pool.length){
+    outOfBook = true;
+    const cfg = engineCfg();
+    const san = engineMove(cfg);
+    /* named for what it is: this is the small engine, not Stockfish, and it is
+       meant to be beatable — see engineCfg */
+    dbg("coach", "out of book — built-in engine at depth " + cfg.depth + ": " + san);
+    return san;
+  }
   outOfBook = false;
   const keep = varietySet(pool);
-  if (!variety || keep.length === 1) return keep[0].san;
-  let x = Math.random() * keep.reduce((s,m) => s + gcount(m), 0);
-  for (const m of keep){ x -= gcount(m); if (x <= 0) return m.san; }
-  return keep[0].san;
+  let pick = keep[0];
+  if (variety && keep.length > 1){
+    let x = Math.random() * keep.reduce((s,m) => s + gcount(m), 0);
+    for (const m of keep){ x -= gcount(m); if (x <= 0){ pick = m; break; } }
+  }
+  dbg("coach", "book: " + pick.san + " (" + fmt(gcount(pick)) + " games"
+    + (keep.length > 1 ? ", one of " + keep.length + " kept" : "") + ")");
+  return pick.san;
 }
 /* Out of book there is no crowd left to copy, so the fallback engine is
    matched to the pools instead: low buckets get a shallow search that settles
@@ -630,10 +699,13 @@ async function lookUp(fen){
   let list = pools.slice();
   let data = await getBook(fen, list);
   if (!hasMoves(data) && !apiDown && list.length < BUCKETS.length){
+    dbg("book", "nothing in your pools here — asking every band");
     list = BUCKETS.slice();       // the whole database, in one more request
     data = await getBook(fen, list);
   }
   const param = poolParam(list);
+  dbg("book", hasMoves(data) ? data.moves.length + " replies from " + param
+                             : (apiDown ? "database unavailable" : "no human games here"));
   if (hasMoves(data)){
     data.pools = param;             // rides along with the cached payload
     if (param === poolParam()) reachBy.delete(fen); else reachBy.set(fen, param);
@@ -862,8 +934,10 @@ function tipHtml(n){
   const who = n % 2 ? "White" : "Black";
   const head = '<div class="t-head"><span class="t-san">' + Math.ceil(n/2)
     + (n % 2 ? "." : "…") + h[n-1] + '</span>';
-  if (!r) return head + '<span class="t-rate">Evaluating…</span></div>'
-    + '<div class="t-note">The engine is still looking at the position this move led to.</div>';
+  if (!r) return head + '<span class="t-rate">' + (sf.down ? "No engine" : "Evaluating…") + '</span></div>'
+    + '<div class="t-note">' + (sf.down
+        ? "Stockfish is not running, so this move has not been rated."
+        : "The engine is still looking at the position this move led to.") + '</div>';
 
   const rat = RATINGS[r.key];
   const doomed = r.loss >= 9000;                 // walked into mate; pawns stop meaning anything
@@ -910,7 +984,9 @@ function evalTipHtml(){
     + (n ? "After " + Math.ceil(n/2) + (n % 2 ? "." : "…") + h[n-1] : "Starting position")
     + '</span><span class="t-rate">Position</span></div>';
   const e = deepest(evalByPly[n]);
-  if (!e) return head + '<div class="t-note">Still evaluating…</div>';
+  if (!e) return head + '<div class="t-note">'
+    + (sf.down ? "Stockfish is not running, so this position has not been read."
+               : "Still evaluating…") + '</div>';
 
   const rows = [];
   let note = "";
@@ -1189,10 +1265,9 @@ const noisier = (a, x) => ((x.captured ? VAL[x.captured] : 0) + (x.promotion ? 8
    and undo, which comes to about two thousand nodes a second. Stockfish does
    the same work in WebAssembly at a scale that makes fourteen plies ordinary.
    It answers for everything the shallow engine used to: the bar, the rating on
-   a move, and the two arrows. The shallow one stays, because a worker cannot
-   be started from a file:// page and this app is meant to open that way too —
-   so opening index.html straight off the disk still gets a coach, just a
-   short-sighted one.
+   a move, and the two arrows. The shallow one is kept but no longer stands in
+   for it — see SF_ONLY. It still picks the coach's move once a position leaves
+   the database, which is a different job: that one has to be weak on purpose.
    Nothing is searched until we know which of the two is answering. A rating is
    one position subtracted from another and the two must come from the same
    engine at the same depth, so the choice has to be settled before the first
@@ -1206,25 +1281,51 @@ const SF_DEPTH = 14;       // plies; the point of all this
    counts moves within a tenth of a pawn of the best and stops caring at four. */
 const SF_MULTI = 4;
 const SF_HASH = 32;        // MB, small enough for a phone
+/* On trial, and therefore alone. With this true the two-ply engine never
+   answers for the bar, a rating or an arrow: if Stockfish does not start, or
+   stops answering, the page says so and those readings go blank. A quiet
+   fallback is the one thing that would make a broken engine indistinguishable
+   from a working one, which is exactly the doubt this is here to settle.
+   Setting it false restores the old behaviour whole — nothing was deleted. */
+const SF_ONLY = true;
 const sf = {
   worker: null,
   on: false,               // answering, and therefore what the records are from
-  probe: null              // settled once, before anything is searched
+  probe: null,             // settled once, before anything is searched
+  down: false,             // asked for, and did not come
+  why: ""                  // in words, for the banner
 };
 function sfStart(){
   return new Promise(resolve => {
+    const t0 = Date.now();
     let worker;
+    dbg("engine", "starting " + SF_PATH + " over " + location.protocol);
     try { worker = new Worker(SF_PATH); }
-    catch(e){ resolve(false); return; }        // file://, or no worker support
+    catch(e){                                  // file://, or no worker support
+      sf.why = "this page cannot start a worker (" + ((e && e.message) || e) + ")";
+      dbg("engine", "FAILED — " + sf.why);
+      resolve(false); return;
+    }
     /* a build that cannot fetch its own wasm fails after construction, so the
        handshake is the only proof that it is really there */
-    const giveUp = setTimeout(() => { try { worker.terminate(); } catch(e){} resolve(false); }, 10000);
-    worker.onerror = () => { clearTimeout(giveUp); resolve(false); };
+    const giveUp = setTimeout(() => {
+      try { worker.terminate(); } catch(e){}
+      sf.why = "it did not answer within ten seconds";
+      dbg("engine", "FAILED — " + sf.why);
+      resolve(false);
+    }, 10000);
+    worker.onerror = e => {
+      clearTimeout(giveUp);
+      sf.why = "it failed to load (" + ((e && e.message) || "worker error") + ")";
+      dbg("engine", "FAILED — " + sf.why);
+      resolve(false);
+    };
     worker.onmessage = e => {
       if (typeof e.data === "string" && e.data.trim() === "readyok"){
         clearTimeout(giveUp);
         worker.onmessage = null; worker.onerror = null;
         sf.worker = worker; sf.on = true;
+        dbg("engine", "ready in " + (Date.now() - t0) + "ms");
         resolve(true);
       }
     };
@@ -1240,6 +1341,7 @@ let sfChain = Promise.resolve();
 function sfGo(fen, depth){
   const run = () => new Promise(resolve => {
     const lines = [];
+    const t0 = Date.now();
     const onMsg = e => {
       const t = e.data;
       if (typeof t !== "string") return;
@@ -1248,10 +1350,18 @@ function sfGo(fen, depth){
         lines[(pv ? +pv[1] : 1) - 1] = t;       // later depths overwrite earlier ones
       } else if (t.startsWith("bestmove")){
         sf.worker.removeEventListener("message", onMsg);
+        /* what it actually reached, which is not always what it was asked for:
+           a stop cuts the search short and it answers with what it has */
+        const got = (/\bdepth (\d+)/.exec(lines[0] || "") || [,"?"])[1];
+        const nps = (/\bnps (\d+)/.exec(lines[0] || "") || [,null])[1];
+        dbg("search", "answered in " + (Date.now() - t0) + "ms at depth " + got
+          + (nps ? ", " + Math.round(nps/1000) + "k nodes/s" : "")
+          + " — " + (t.split(" ")[1] || "?"));
         resolve(lines);
       }
     };
     sf.worker.addEventListener("message", onMsg);
+    dbg("search", "go depth " + depth + " multipv " + SF_MULTI + "  " + fen.split(" ").slice(0,2).join(" "));
     sf.worker.postMessage("position fen " + fen);
     sf.worker.postMessage("go depth " + depth);
   });
@@ -1261,6 +1371,19 @@ function sfGo(fen, depth){
 /* Asking it to stop makes it answer now with what it has, which is how a
    search for a position nobody is looking at any more gets out of the way. */
 function sfStop(){ if (sf.on) sf.worker.postMessage("stop"); }
+/* With nothing behind it, a failure has to be visible: everything the engine
+   feeds simply stops, and a bar that has gone quiet should say why rather than
+   look like it is still thinking. */
+function showEngineDown(why){
+  const box = $("engwarn");
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = '<b>Stockfish did not start</b> — ' + (why || "reason unknown") + '. '
+    + 'The evaluation bar, the move ratings and Best stay blank until it does'
+    + (location.protocol === "file:"
+        ? ': a page opened straight off the disk cannot start a worker, so serve the folder over http to test it.'
+        : '. The coach still plays; its off-book moves come from the small built-in engine, as they always have.');
+}
 
 /* A mate is worth more than any number of pawns and a shorter one more than a
    longer, which is the whole of what the rest of this file needs from it. */
@@ -1332,7 +1455,10 @@ function viewedPly(){ return reviewPly === null ? game.history().length : review
 const deepest = e => e && e.deep ? Object.assign({}, e, e.deep) : e;
 function paintPly(ply){
   const e = deepest(evalByPly[ply]);
-  if (!e){ paintEval(evalPct, "…", evalThinSide, evalThick, true); return; }
+  /* an unread ply with an engine behind it is one being read; with no engine
+     behind it nothing is coming, and an ellipsis would be a lie */
+  if (!e){ paintEval(sf.down ? 50 : evalPct, sf.down ? "—" : "…",
+                     sf.down ? null : evalThinSide, sf.down ? 1 : evalThick, !sf.down); return; }
   const turn = ply % 2 === 0 ? "w" : "b";        // White starts, so parity is the mover
   if (e.over === "checkmate")
     return paintEval(turn === "w" ? 0 : 100, turn === "w" ? "0–1" : "1–0", null, 1);
@@ -1385,7 +1511,7 @@ async function searchStockfish(ply, fen, live, mine, g){
     renderBest();
   }
   const lines = await sfGo(fen, SF_DEPTH);
-  if (mine !== evalToken) return;
+  if (mine !== evalToken){ dbg("eval", "ply " + ply + " dropped — the position moved on"); return; }
   const seen = [];
   for (const text of lines){
     if (!text) continue;
@@ -1397,7 +1523,7 @@ async function searchStockfish(ply, fen, live, mine, g){
     g.undo();
     seen.push({cp, san: mv.san, from: mv.from, to: mv.to, flags: mv.flags});
   }
-  if (!seen.length) return;                       // nothing usable; leave the ply unread
+  if (!seen.length){ dbg("eval", "ply " + ply + " unreadable — no usable line came back"); return; }
   seen.sort((a, b) => b.cp - a.cp);
   const best = seen[0].cp;
   const side = g.turn() === "w" ? 1 : -1;
@@ -1416,12 +1542,13 @@ async function searchStockfish(ply, fen, live, mine, g){
     top: seen.slice(0, 2).map(m => ({san: m.san, cp: side * m.cp, from: m.from, to: m.to})),
     by: "sf", depth: +depth, deepDone: true      // nothing here wants deepening
   });
+  dbg("eval", "ply " + ply + " = " + cpLabel(side * best) + " at depth " + depth
+    + " (Stockfish), best " + seen.slice(0,2).map(m => m.san).join(" / ")
+    + ", " + res.toFixed(1) + "/4 replies hold");
 }
 
 async function searchPly(ply, fen, live, mine){
   const g = new Chess(fen);
-  if (sf.on && !g.game_over()) return searchStockfish(ply, fen, live, mine, g);
-
   if (g.game_over()){
     /* a mated side is worth -99000 to itself; a draw is worth nothing to
        either, which is what makes stalemating a won position score as the
@@ -1435,6 +1562,11 @@ async function searchPly(ply, fen, live, mine){
     });
     return;
   }
+  /* the position is a live one, so it belongs to whichever engine is on duty */
+  if (sf.on) return searchStockfish(ply, fen, live, mine, g);
+  /* and while Stockfish is the only one on duty, nobody else answers for it:
+     the ply stays unread, which is what the blank bar and the banner say */
+  if (SF_ONLY){ dbg("eval", "ply " + ply + " left unread — no engine, and no fallback"); return; }
 
   if (live && reviewPly === null){
     paintEval(evalPct, "…", evalThinSide, evalThick, true);
@@ -1596,6 +1728,7 @@ function finishDeep(ply, mine){
 }
 function wantDeep(n){
   const e = evalByPly[n];
+  if (SF_ONLY) return;      // the deeper pass is the old engine's, and it is off duty
   if (!showBest || searching || deepening !== null) return;
   if (!e || e.over || e.deepDone || (e.depth || 2) >= DEEP_MAX) return;
   deepening = n;
@@ -1621,7 +1754,7 @@ function fenAtPly(n){
 }
 let backfilling = false;
 async function fillEvals(plies){
-  if (backfilling) return;
+  if (backfilling || sf.down) return;      // nothing to fill them with
   backfilling = true;
   try {
     for (const k of plies){
@@ -2095,12 +2228,19 @@ if (token) $("tok").textContent = "Token saved";
    compared with what this session will write, and an unread ply is honest
    about itself where a mismatched one is not. */
 sf.probe = sfStart().then(ok => {
-  const want = ok ? "sf" : "js";
+  if (!ok){ sf.down = true; showEngineDown(sf.why); }
+  dbgEngine(ok ? "Stockfish, depth " + SF_DEPTH + ", MultiPV " + SF_MULTI + " — no fallback"
+               : "none (" + sf.why + ")" + (SF_ONLY ? " — and no fallback" : ""));
+  const want = (SF_ONLY || ok) ? "sf" : "js";
   const keep = e => e && (e.by || "js") === want;
-  if (evalByPly.some(e => e && !keep(e))){
+  const dropped = evalByPly.filter(e => e && !keep(e)).length;
+  if (dropped){
+    dbg("eval", dropped + " stored " + (want === "sf" ? "built-in" : "Stockfish")
+      + " record(s) dropped — a rating cannot subtract two different engines");
     evalByPly = evalByPly.map(e => keep(e) ? e : null);
-    saveSession(); repaintEval();
+    saveSession();
   }
+  repaintEval();          // the bar has been waiting on this answer either way
   return ok;
 });
 pools = storedPools() || DEFAULT_POOLS.slice(); renderChips();

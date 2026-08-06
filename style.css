@@ -283,6 +283,22 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
 .note .hot{color:var(--gold)}
 .warn{border-left:2px solid var(--gold-dim);padding-left:9px;color:var(--dim);font-size:11.5px;margin-top:10px}
 
+/* debug panel — only ever built when ?debug asked for it. Pinned to the
+   bottom of the window rather than laid into the page, so switching it on
+   cannot move a single thing the app is being watched for. */
+body.debugging{padding-bottom:42vh}    /* so the panel covers nothing you cannot scroll to */
+.dbg{position:fixed;left:0;right:0;bottom:0;z-index:60;max-height:38vh;display:flex;flex-direction:column;
+  background:rgba(20,27,36,.96);border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:11px;color:var(--dim)}
+.dbg.min{max-height:none}
+.dbg.min #dbgout{display:none}
+.dbghead{display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.dbg.min .dbghead{border-bottom:0}
+.dbghead b{color:var(--gold);font-weight:400;letter-spacing:.14em;text-transform:uppercase;font-size:10px}
+.dbghead #dbgeng{flex:1;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dbghead button{padding:3px 8px;font-size:11px}
+.dbg pre{margin:0;padding:8px 10px;overflow:auto;white-space:pre-wrap;line-height:1.45}
+
 /* promotion */
 .promo{position:absolute;inset:0;background:rgba(20,27,36,.86);display:none;
   align-items:center;justify-content:center;gap:8px;z-index:5}
