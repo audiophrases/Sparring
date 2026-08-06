@@ -1078,6 +1078,19 @@ function engineMove(cfg){
    cost accuracy, because a leaf only needs captures resolved when the move that
    reached it was itself a capture, a promotion, or a check.                  */
 const EVAL_BATCH = 4;      // root moves per slice before yielding to the browser
+/* How far past the two-ply search the arrows are allowed to go. The record the
+   bar and the ratings are built from stays at two plies — those numbers are
+   calibrated to it, and a deeper one would silently restate every mark in the
+   game — so deepening rewrites the two best moves and nothing else.
+   One step is the ceiling, and that is a measurement rather than a preference.
+   chess.js allocates a position on every move and undo, which puts this engine
+   at roughly two thousand nodes a second: a third ply costs about four seconds
+   in an opening and over twenty in a middlegame, and a fourth is out of reach
+   everywhere. So the third is attempted, on a budget, and a position too sharp
+   to finish it keeps the answer it already had. */
+const DEEP_MAX = 3;        // plies, counting the move itself
+const DEEP_BUDGET = 4000;  // ms, checked between root moves
+const DEEP_NODES = 15000;  // and a ceiling in nodes, for a machine faster than the clock
 const RES_MARGIN = 100;    // a move within this of the best still "holds" the position
 const RES_FULL   = 4;      // this much resilience draws the bar at full height
 const RES_MIN    = 0.2;    // an only-move position still draws a visible sliver
@@ -1206,8 +1219,22 @@ function syncEvalBar(){ paintPly(viewedPly()); renderBest(); }
    position the game is actually at — the only one allowed to paint the bar
    mid-thought, since a review is looking at a ply that already has its answer. */
 async function updateEval(){ return runEval(game.history().length, game.fen(), true); }
+/* One search at a time, and `searching` is how everything else knows: a deeper
+   pass for the arrows must not start on top of the search the bar is waiting
+   for, and must not cancel it either. */
+let searching = false;
 async function runEval(ply, fen, live){
   const mine = ++evalToken;
+  searching = true;
+  try { await searchPly(ply, fen, live, mine); }
+  finally {
+    /* the arrows ask to go deeper from renderBest, and every renderBest during
+       the search above ran while this one still held the engine — so the ask
+       has to come round once more now that it does not */
+    if (mine === evalToken){ searching = false; renderBest(); }
+  }
+}
+async function searchPly(ply, fen, live, mine){
   const g = new Chess(fen);
 
   if (g.game_over()){
@@ -1291,7 +1318,73 @@ async function runEval(ply, fen, live){
   recordEval(ply, {best, white, res: resilience, legal: ms.length, capped, over: null,
                    bestTo: ms[0] && ms[0].to, bestCap: !!(ms[0] && /[ce]/.test(ms[0].flags || "")),
                    top: ms.slice(0, 2).map(m => ({san: m.san, cp: side * m._v,
-                                                  from: m.from, to: m.to}))});
+                                                  from: m.from, to: m.to})),
+                   depth: 2, deepDone: false});
+}
+
+/* ===================== deeper, for the arrows =====================
+   Two plies is enough to rate a move that was played — you know what it cost
+   the moment the reply lands — but it is thin for a move being recommended.
+   So the arrows appear at once on the two-ply answer and are then re-drawn as
+   each deeper pass finishes, which is the honest way round: something to look
+   at immediately, and better as soon as better exists.
+   Each pass searches every root move with a full window. Narrowing it would be
+   faster, but a move that fails low comes back carrying the best score rather
+   than its own, and the second arrow's number would be a fiction. */
+let deepening = null;                    // the ply a deeper pass is running for
+async function deepenBest(ply, fen, mine){
+  const started = Date.now();
+  let spent = 0;
+  for (let depth = (evalByPly[ply].depth || 2) + 1; depth <= DEEP_MAX; depth++){
+    const g = new Chess(fen);
+    const ms = g.moves({verbose:true});
+    if (ms.length < 2) return finishDeep(ply, mine);
+    /* the shallower pass already knows roughly where to look, and a root move
+       searched first is what gives the rest of them something to fail against */
+    const lead = (evalByPly[ply].top || []).map(m => m.san);
+    ms.sort((a, b) => (lead.indexOf(b.san) >= 0) - (lead.indexOf(a.san) >= 0) || noisier(a, b));
+    const side = g.turn() === "w" ? 1 : -1;
+    for (let i = 0; i < ms.length; i++){
+      nodes = 0;                                    // each root move gets its own quiescence
+      g.move(ms[i]);
+      ms[i]._v = -negamax(g, depth - 1, -Infinity, Infinity);
+      g.undo();
+      spent += nodes;
+      /* Out of budget mid-pass: what has been scored so far is a half-sorted
+         list, not an answer, so it is dropped and the depth below it stands.
+         Checked per move rather than per batch — one root move deep in a sharp
+         position is enough to run past both ceilings on its own. */
+      if (spent > DEEP_NODES || Date.now() - started > DEEP_BUDGET) return finishDeep(ply, mine);
+      if (i % EVAL_BATCH === EVAL_BATCH - 1 && i < ms.length - 1){
+        await sleep(0);
+        if (mine !== evalToken) return;             // a newer search owns the board
+      }
+    }
+    ms.sort((a, b) => b._v - a._v);
+    const e = evalByPly[ply];
+    if (!e || mine !== evalToken) return;
+    e.top = ms.slice(0, 2).map(m => ({san: m.san, cp: side * m._v, from: m.from, to: m.to}));
+    e.depth = depth;
+    saveSession();
+    renderBest();
+  }
+  finishDeep(ply, mine);
+}
+/* nothing more is coming for this ply, so nothing should ask again */
+function finishDeep(ply, mine){
+  const e = evalByPly[ply];
+  if (e && mine === evalToken){ e.deepDone = true; saveSession(); }
+}
+function wantDeep(n){
+  const e = evalByPly[n];
+  if (!showBest || searching || deepening !== null) return;
+  if (!e || e.over || e.deepDone || (e.depth || 2) >= DEEP_MAX) return;
+  deepening = n;
+  searching = true;
+  const mine = ++evalToken;
+  deepenBest(n, fenAtPly(n), mine)
+    .catch(() => {})
+    .then(() => { deepening = null; if (mine === evalToken){ searching = false; renderBest(); } });
 }
 
 /* ===================== filling in a ply the engine never saw =====================
@@ -1337,7 +1430,7 @@ function squareCenter(name){
   if (userColor === "b"){ r = 7 - r; f = 7 - f; }
   return {x: f + 0.5, y: r + 0.5};
 }
-function arrowSvg(from, to, cls){
+function arrowSvg(from, to, cls, label){
   const a = squareCenter(from), b = squareCenter(to);
   if (!a || !b) return "";
   const dx = b.x - a.x, dy = b.y - a.y;
@@ -1349,12 +1442,20 @@ function arrowSvg(from, to, cls){
   const tx = b.x - ux*ARROW.tip,  ty = b.y - uy*ARROW.tip;
   const bx = tx - ux*ARROW.head,  by = ty - uy*ARROW.head;
   const pt = (x,y) => x.toFixed(3) + "," + y.toFixed(3);
+  /* the score rides on the shaft, halfway along, on a plate of its own so it
+     is legible over a cream square, a green one or a piece */
+  const mx = (sx + bx)/2, my = (sy + by)/2;
+  const w = 0.28 + label.length * 0.15, h = 0.34;
+  const plate = '<rect class="plate" x="' + (mx - w/2).toFixed(3) + '" y="' + (my - h/2).toFixed(3)
+    + '" width="' + w.toFixed(3) + '" height="' + h + '" rx="0.07"/>'
+    + '<text x="' + mx.toFixed(3) + '" y="' + my.toFixed(3) + '">' + label + '</text>';
   return '<g class="' + cls + '">'
     + '<line x1="' + sx.toFixed(3) + '" y1="' + sy.toFixed(3)
     + '" x2="' + bx.toFixed(3) + '" y2="' + by.toFixed(3) + '"/>'
     + '<polygon points="' + pt(tx,ty) + " "
     + pt(bx + px*ARROW.wide, by + py*ARROW.wide) + " "
-    + pt(bx - px*ARROW.wide, by - py*ARROW.wide) + '"/></g>';
+    + pt(bx - px*ARROW.wide, by - py*ARROW.wide) + '"/>'
+    + plate + '</g>';
 }
 function renderBest(){
   const svg = $("arrows");
@@ -1368,6 +1469,7 @@ function renderBest(){
     return;
   }
   if (e.over || !e.top || !e.top.length) return;
+  wantDeep(n);                          // and keep looking, while you read these
   /* records written before the arrows existed name the move without saying
      where it goes, so the square is read back off the position */
   let board = null;
@@ -1380,8 +1482,10 @@ function renderBest(){
     return mv;
   };
   /* second first, so the better move is drawn over it where they cross */
-  svg.innerHTML = e.top.slice(0, 2).map(squares).map((m, i) =>
-    m ? arrowSvg(m.from, m.to, i ? "a2" : "a1") : "").reverse().join("");
+  svg.innerHTML = e.top.slice(0, 2).map((m, i) => {
+    const sq = squares(m);
+    return sq ? arrowSvg(sq.from, sq.to, i ? "a2" : "a1", cpLabel(m.cp)) : "";
+  }).reverse().join("");
 }
 
 /* ============================ pools ============================

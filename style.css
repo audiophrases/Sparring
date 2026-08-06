@@ -135,6 +135,10 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
 /* the second choice, plainly the second: thinner, and further back */
 .arrows .a2{opacity:.45}
 .arrows .a2 line{stroke-width:.1}
+/* the score, on its own plate so it reads over any square or piece */
+.arrows .plate{fill:rgba(20,27,36,.86)}
+.arrows text{fill:var(--text);font-family:var(--mono);font-size:.24px;
+  text-anchor:middle;dominant-baseline:central;letter-spacing:.01px}
 .dot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:28%;height:28%;border-radius:50%;background:rgba(20,27,36,.22)}
 .ring{position:absolute;inset:0;border-radius:50%;
