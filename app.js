@@ -898,6 +898,9 @@ function evalTipHtml(){
     rows.push(["To move", n % 2 === 0 ? "White" : "Black"]);
     rows.push(["Replies that hold", (e.capped ? RES_FULL + "+" : e.res.toFixed(1)) + " of " + RES_FULL]);
     rows.push(["Legal moves", String(e.legal)]);
+    /* which of the two engines said so, since they do not see the same board:
+       a page opened off the disk cannot start a worker and gets the short one */
+    rows.push(["Searched", (e.by === "sf" ? "Stockfish " : "built-in ") + (e.depth || 2) + " ply"]);
     if (!e.capped && e.res < 2)
       note = "The bar is drawn thin because that assessment rests on very few moves.";
   }
@@ -1155,6 +1158,95 @@ let openByPly = [];
 const noisier = (a, x) => ((x.captured ? VAL[x.captured] : 0) + (x.promotion ? 800 : 0))
                         - ((a.captured ? VAL[a.captured] : 0) + (a.promotion ? 800 : 0));
 
+/* ===================== Stockfish =====================
+   The engine above is what this file can do on its own, and what it can do is
+   four plies in several seconds — chess.js allocates a position on every move
+   and undo, which comes to about two thousand nodes a second. Stockfish does
+   the same work in WebAssembly at a scale that makes fourteen plies ordinary.
+   It answers for everything the shallow engine used to: the bar, the rating on
+   a move, and the two arrows. The shallow one stays, because a worker cannot
+   be started from a file:// page and this app is meant to open that way too —
+   so opening index.html straight off the disk still gets a coach, just a
+   short-sighted one.
+   Nothing is searched until we know which of the two is answering. A rating is
+   one position subtracted from another and the two must come from the same
+   engine at the same depth, so the choice has to be settled before the first
+   record is written rather than in the middle of a game. */
+const SF_PATH = "engine/stockfish-nnue-16-single.js";
+const SF_DEPTH = 14;       // plies; the point of all this
+/* Lines, not depth, are what a search of this shape costs: measured on six
+   positions, MultiPV 5 at depth 14 took 2.5s each and MultiPV 3 took 1.1s,
+   while depth 16 at MultiPV 5 cost barely more than 14. Four is the number the
+   record actually needs — two for the arrows, and four for resilience, which
+   counts moves within a tenth of a pawn of the best and stops caring at four. */
+const SF_MULTI = 4;
+const SF_HASH = 32;        // MB, small enough for a phone
+const sf = {
+  worker: null,
+  on: false,               // answering, and therefore what the records are from
+  probe: null              // settled once, before anything is searched
+};
+function sfStart(){
+  return new Promise(resolve => {
+    let worker;
+    try { worker = new Worker(SF_PATH); }
+    catch(e){ resolve(false); return; }        // file://, or no worker support
+    /* a build that cannot fetch its own wasm fails after construction, so the
+       handshake is the only proof that it is really there */
+    const giveUp = setTimeout(() => { try { worker.terminate(); } catch(e){} resolve(false); }, 10000);
+    worker.onerror = () => { clearTimeout(giveUp); resolve(false); };
+    worker.onmessage = e => {
+      if (typeof e.data === "string" && e.data.trim() === "readyok"){
+        clearTimeout(giveUp);
+        worker.onmessage = null; worker.onerror = null;
+        sf.worker = worker; sf.on = true;
+        resolve(true);
+      }
+    };
+    worker.postMessage("uci");
+    worker.postMessage("setoption name Hash value " + SF_HASH);
+    worker.postMessage("setoption name MultiPV value " + SF_MULTI);
+    worker.postMessage("isready");
+  });
+}
+/* One search at a time, in the order they were asked for: the engine has one
+   board, and a `go` sent while it is thinking is a `go` it will not answer. */
+let sfChain = Promise.resolve();
+function sfGo(fen, depth){
+  const run = () => new Promise(resolve => {
+    const lines = [];
+    const onMsg = e => {
+      const t = e.data;
+      if (typeof t !== "string") return;
+      if (t.startsWith("info ") && t.includes(" pv ")){
+        const pv = /\bmultipv (\d+)/.exec(t);
+        lines[(pv ? +pv[1] : 1) - 1] = t;       // later depths overwrite earlier ones
+      } else if (t.startsWith("bestmove")){
+        sf.worker.removeEventListener("message", onMsg);
+        resolve(lines);
+      }
+    };
+    sf.worker.addEventListener("message", onMsg);
+    sf.worker.postMessage("position fen " + fen);
+    sf.worker.postMessage("go depth " + depth);
+  });
+  sfChain = sfChain.then(run, run);
+  return sfChain;
+}
+/* Asking it to stop makes it answer now with what it has, which is how a
+   search for a position nobody is looking at any more gets out of the way. */
+function sfStop(){ if (sf.on) sf.worker.postMessage("stop"); }
+
+/* A mate is worth more than any number of pawns and a shorter one more than a
+   longer, which is the whole of what the rest of this file needs from it. */
+const MATE_CP = 99000;
+function sfScore(text){
+  const mate = /\bscore mate (-?\d+)/.exec(text);
+  if (mate) return (+mate[1] >= 0 ? 1 : -1) * (MATE_CP - Math.min(Math.abs(+mate[1]), 900));
+  const cp = /\bscore cp (-?\d+)/.exec(text);
+  return cp ? +cp[1] : null;
+}
+
 /* the reply ply: score every answer to a root move, from the replier's side */
 function evalReplies(g, alpha, beta){
   const ms = g.moves({verbose:true});
@@ -1241,7 +1333,14 @@ let searching = false;
 async function runEval(ply, fen, live){
   const mine = ++evalToken;
   searching = true;
-  try { await searchPly(ply, fen, live, mine); }
+  /* whatever it is still thinking about is a position nobody is asking about
+     now: told to stop, it answers at once and the queue moves on */
+  sfStop();
+  try {
+    if (sf.probe) await sf.probe;      // settled once, before anything is written
+    if (mine !== evalToken) return;
+    await searchPly(ply, fen, live, mine);
+  }
   finally {
     /* the arrows ask to go deeper from renderBest, and every renderBest during
        the search above ran while this one still held the engine — so the ask
@@ -1249,8 +1348,54 @@ async function runEval(ply, fen, live){
     if (mine === evalToken){ searching = false; renderBest(); }
   }
 }
+/* Stockfish answers in UCI, which is a move as four squares and a score from
+   the side to move — the same convention the shallow engine's negamax uses, so
+   the record it fills is the same record, and nothing downstream can tell which
+   of the two wrote it. MultiPV gives the lines the arrows need, and gives
+   resilience for free: it is a count of moves within a tenth of a pawn of the
+   best, capped at four, so five lines is all it can ever need to see. */
+async function searchStockfish(ply, fen, live, mine, g){
+  if (live && reviewPly === null){
+    paintEval(evalPct, "…", evalThinSide, evalThick, true);
+    renderBest();
+  }
+  const lines = await sfGo(fen, SF_DEPTH);
+  if (mine !== evalToken) return;
+  const seen = [];
+  for (const text of lines){
+    if (!text) continue;
+    const cp = sfScore(text);
+    const uci = /\bpv ([a-h][1-8][a-h][1-8][qrbn]?)/.exec(text);
+    if (cp === null || !uci) continue;
+    const mv = g.move({from: uci[1].slice(0,2), to: uci[1].slice(2,4), promotion: uci[1][4] || "q"});
+    if (!mv) continue;
+    g.undo();
+    seen.push({cp, san: mv.san, from: mv.from, to: mv.to, flags: mv.flags});
+  }
+  if (!seen.length) return;                       // nothing usable; leave the ply unread
+  seen.sort((a, b) => b.cp - a.cp);
+  const best = seen[0].cp;
+  const side = g.turn() === "w" ? 1 : -1;
+  /* counted, then capped — with exactly as many lines as the cap, asking
+     before each one instead would leave the last of them unable to reach it */
+  let res = 0;
+  for (const m of seen){
+    res += Math.max(0, 1 - (best - m.cp) / RES_MARGIN);
+    if (res >= RES_FULL) break;
+  }
+  const capped = res >= RES_FULL;
+  const depth = (/\bdepth (\d+)/.exec(lines[0] || "") || [,SF_DEPTH])[1];
+  recordEval(ply, {
+    best, white: side * best, res, capped, legal: g.moves().length, over: null,
+    bestTo: seen[0].to, bestCap: /[ce]/.test(seen[0].flags || ""),
+    top: seen.slice(0, 2).map(m => ({san: m.san, cp: side * m.cp, from: m.from, to: m.to})),
+    by: "sf", depth: +depth, deepDone: true      // nothing here wants deepening
+  });
+}
+
 async function searchPly(ply, fen, live, mine){
   const g = new Chess(fen);
+  if (sf.on && !g.game_over()) return searchStockfish(ply, fen, live, mine, g);
 
   if (g.game_over()){
     /* a mated side is worth -99000 to itself; a draw is worth nothing to
@@ -1691,6 +1836,10 @@ function verboseHistory(){
 function rateMove(n){                        // n = 1-based ply
   const before = evalByPly[n-1], after = evalByPly[n];
   if (!before || !after) return null;
+  /* two engines see a position differently enough that the difference would be
+     charged to the move between them; a session settles on one, so this only
+     ever catches a record that outlived the engine that wrote it */
+  if ((before.by || "js") !== (after.by || "js")) return null;
   /* What a move cost is the difference between the position in front of it and
      the position behind it, so the two have to have been looked at equally
      hard. Charging a move for the gap between a three-ply reading and a
@@ -1805,11 +1954,12 @@ function setBest(v){
   renderBest();
 }
 $("best").onclick = () => setBest(!showBest);
-/* Best lasts one position. The arrows are two searches deep and this engine is
-   slow enough to feel them, so they are not worth spending on a position you
-   have already left — and asking again is the better habit anyway: a hint you
-   have to reach for is one you noticed you needed. */
-function bestExpires(){ if (showBest) setBest(false); }
+/* Best lasts one position — but only when the shallow engine is answering,
+   which is the whole reason it does. There the arrows cost a search of their
+   own, several seconds of one, and a position you have already left is not
+   worth spending it on. Stockfish finds them inside the search every ply gets
+   anyway, so they cost nothing and there is nothing to ration. */
+function bestExpires(){ if (showBest && !sf.on) setBest(false); }
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);
@@ -1911,6 +2061,19 @@ function restoreGame(saved){
 }
 
 if (token) $("tok").textContent = "Token saved";
+/* Started before anything is searched, and once it settles, any record left
+   over from a session that ran on the other engine is dropped: they cannot be
+   compared with what this session will write, and an unread ply is honest
+   about itself where a mismatched one is not. */
+sf.probe = sfStart().then(ok => {
+  const want = ok ? "sf" : "js";
+  const keep = e => e && (e.by || "js") === want;
+  if (evalByPly.some(e => e && !keep(e))){
+    evalByPly = evalByPly.map(e => keep(e) ? e : null);
+    saveSession(); repaintEval();
+  }
+  return ok;
+});
 pools = storedPools() || DEFAULT_POOLS.slice(); renderChips();
 /* The flags are set before the UI is painted from them, rather than run
    through setCoach/setVariety: those two are for a person changing their mind
