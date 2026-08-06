@@ -1979,12 +1979,12 @@ function setBest(v){
   renderBest();
 }
 $("best").onclick = () => setBest(!showBest);
-/* Best lasts one position — but only when the shallow engine is answering,
-   which is the whole reason it does. There the arrows cost a search of their
-   own, several seconds of one, and a position you have already left is not
-   worth spending it on. Stockfish finds them inside the search every ply gets
-   anyway, so they cost nothing and there is nothing to ration. */
-function bestExpires(){ if (showBest && !sf.on) setBest(false); }
+/* Best lasts one position, whichever engine is answering. It began as a way to
+   ration a search that cost seconds, and Stockfish finds the same two moves
+   inside the search every ply gets anyway — but the habit is worth more than
+   the saving: a hint you have to reach for is one you noticed you needed, and
+   a coach that leaves the answer on the board between moves is not sparring. */
+function bestExpires(){ if (showBest) setBest(false); }
 
 /* on-screen equivalents of the arrow keys, for anyone without a keyboard */
 $("prev").onclick = () => gotoPly((reviewPly === null ? game.history().length : reviewPly) - 1);

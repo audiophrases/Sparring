@@ -169,7 +169,7 @@ h1 .the{font-size:.6em;color:var(--dim);letter-spacing:.01em;margin-right:.05em}
   margin-left:-.5px;background:rgba(227,167,47,.85);z-index:1}
 .evalbar .val{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   background:rgba(20,27,36,.86);color:var(--text);border-radius:2px;
-  padding:1px 8px;font-size:11px;letter-spacing:.06em;white-space:nowrap;z-index:2}
+  padding:1px 8px;font-size:13.2px;letter-spacing:.06em;white-space:nowrap;z-index:2}
 .evalbar.think .val{color:var(--dim)}
 
 /* controls */
@@ -306,7 +306,7 @@ button:disabled:hover{background:var(--panel);border-color:var(--line)}
   .chip,.mini{font-size:12px;padding:5px 9px}
 
   .evalbar{height:30px}
-  .evalbar .val{font-size:12px}
+  .evalbar .val{font-size:14.4px}
 
   .card{padding:15px 16px}
   .card h2{font-size:11px}
