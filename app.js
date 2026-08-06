@@ -882,7 +882,7 @@ function evalTipHtml(){
   const head = '<div class="t-head"><span class="t-san">'
     + (n ? "After " + Math.ceil(n/2) + (n % 2 ? "." : "…") + h[n-1] : "Starting position")
     + '</span><span class="t-rate">Position</span></div>';
-  const e = evalByPly[n];
+  const e = deepest(evalByPly[n]);
   if (!e) return head + '<div class="t-note">Still evaluating…</div>';
 
   const rows = [];
@@ -1082,15 +1082,23 @@ const EVAL_BATCH = 4;      // root moves per slice before yielding to the browse
    bar and the ratings are built from stays at two plies — those numbers are
    calibrated to it, and a deeper one would silently restate every mark in the
    game — so deepening rewrites the two best moves and nothing else.
-   One step is the ceiling, and that is a measurement rather than a preference.
-   chess.js allocates a position on every move and undo, which puts this engine
-   at roughly two thousand nodes a second: a third ply costs about four seconds
-   in an opening and over twenty in a middlegame, and a fourth is out of reach
-   everywhere. So the third is attempted, on a budget, and a position too sharp
-   to finish it keeps the answer it already had. */
-const DEEP_MAX = 3;        // plies, counting the move itself
-const DEEP_BUDGET = 4000;  // ms, checked between root moves
-const DEEP_NODES = 15000;  // and a ceiling in nodes, for a machine faster than the clock
+   Only an even depth is ever published, and that is the whole shape of this.
+   A search of odd depth gives the side to move the last word, so a position
+   with White to move reads high and the one after it reads low — and a rating,
+   which is one subtracted from the other, charges that swing to the move. Two
+   plies is balanced, four is balanced, three is not: measured on 1.e4 e5 Nf3,
+   rating on three plies called every book move an inaccuracy losing half a
+   pawn. So three is searched but never shown. It is the ordering that earns
+   the fourth ply for the few moves worth spending it on.
+   The budget is the other half. chess.js allocates a position on every move
+   and undo, which puts this engine at about two thousand nodes a second: three
+   plies across every move costs four seconds in an opening and over twenty in
+   a middlegame. So a position too sharp to finish keeps the two-ply answer it
+   already had, everywhere and for everything. */
+const DEEP_MAX = 4;        // the depth that gets shown, counting the move itself
+const DEEP_WIDE = 4;       // moves carried from the ordering pass into it
+const DEEP_BUDGET = 10000; // ms, checked between root moves
+const DEEP_NODES = 40000;  // and a ceiling in nodes, for a machine faster than the clock
 const RES_MARGIN = 100;    // a move within this of the best still "holds" the position
 const RES_FULL   = 4;      // this much resilience draws the bar at full height
 const RES_MIN    = 0.2;    // an only-move position still draws a visible sliver
@@ -1198,8 +1206,13 @@ function cpLabel(cp){
    from the record instead of re-searching — instant, and it means an eval
    landing for the live game cannot yank the bar out from under a review. */
 function viewedPly(){ return reviewPly === null ? game.history().length : reviewPly; }
+/* The deepest reading of a ply: the two-ply record, with the deeper pass laid
+   over it where one has finished. Everything that describes a single position
+   — the bar, its tooltip — wants this. Anything comparing two positions wants
+   them at a matching depth instead, which is rateMove's problem. */
+const deepest = e => e && e.deep ? Object.assign({}, e, e.deep) : e;
 function paintPly(ply){
-  const e = evalByPly[ply];
+  const e = deepest(evalByPly[ply]);
   if (!e){ paintEval(evalPct, "…", evalThinSide, evalThick, true); return; }
   const turn = ply % 2 === 0 ? "w" : "b";        // White starts, so parity is the mover
   if (e.over === "checkmate")
@@ -1335,39 +1348,72 @@ let deepening = null;                    // the ply a deeper pass is running for
 async function deepenBest(ply, fen, mine){
   const started = Date.now();
   let spent = 0;
-  for (let depth = (evalByPly[ply].depth || 2) + 1; depth <= DEEP_MAX; depth++){
-    const g = new Chess(fen);
-    const ms = g.moves({verbose:true});
-    if (ms.length < 2) return finishDeep(ply, mine);
-    /* the shallower pass already knows roughly where to look, and a root move
-       searched first is what gives the rest of them something to fail against */
-    const lead = (evalByPly[ply].top || []).map(m => m.san);
-    ms.sort((a, b) => (lead.indexOf(b.san) >= 0) - (lead.indexOf(a.san) >= 0) || noisier(a, b));
-    const side = g.turn() === "w" ? 1 : -1;
-    for (let i = 0; i < ms.length; i++){
+  const g = new Chess(fen);
+  const all = g.moves({verbose:true});
+  if (all.length < 2) return finishDeep(ply, mine);
+  const side = g.turn() === "w" ? 1 : -1;
+  const spentOut = () => spent > DEEP_NODES || Date.now() - started > DEEP_BUDGET;
+
+  /* Score a list of root moves at one depth, or give up. Out of budget mid-way
+     leaves a half-sorted list rather than an answer, so it is dropped whole and
+     the two-ply reading underneath stands. */
+  const scoreAll = async (list, depth) => {
+    for (let i = 0; i < list.length; i++){
       nodes = 0;                                    // each root move gets its own quiescence
-      g.move(ms[i]);
-      ms[i]._v = -negamax(g, depth - 1, -Infinity, Infinity);
+      g.move(list[i]);
+      list[i]._v = -negamax(g, depth - 1, -Infinity, Infinity);
       g.undo();
       spent += nodes;
-      /* Out of budget mid-pass: what has been scored so far is a half-sorted
-         list, not an answer, so it is dropped and the depth below it stands.
-         Checked per move rather than per batch — one root move deep in a sharp
-         position is enough to run past both ceilings on its own. */
-      if (spent > DEEP_NODES || Date.now() - started > DEEP_BUDGET) return finishDeep(ply, mine);
-      if (i % EVAL_BATCH === EVAL_BATCH - 1 && i < ms.length - 1){
+      /* checked per move: one root move deep in a sharp position is enough to
+         run past both ceilings on its own */
+      if (spentOut()) return false;
+      if (i % EVAL_BATCH === EVAL_BATCH - 1 && i < list.length - 1){
         await sleep(0);
-        if (mine !== evalToken) return;             // a newer search owns the board
+        if (mine !== evalToken) return null;        // a newer search owns the board
       }
     }
-    ms.sort((a, b) => b._v - a._v);
-    const e = evalByPly[ply];
-    if (!e || mine !== evalToken) return;
-    e.top = ms.slice(0, 2).map(m => ({san: m.san, cp: side * m._v, from: m.from, to: m.to}));
-    e.depth = depth;
-    saveSession();
-    renderBest();
+    return true;
+  };
+
+  /* the two-ply pass already knows roughly where to look, and a root move
+     searched first is what gives the rest of them something to fail against */
+  const lead = (evalByPly[ply].top || []).map(m => m.san);
+  all.sort((a, b) => (lead.indexOf(b.san) >= 0) - (lead.indexOf(a.san) >= 0) || noisier(a, b));
+
+  const ordered = await scoreAll(all, DEEP_MAX - 1);   // three plies: ordering only
+  if (ordered === null) return;
+  if (!ordered) return finishDeep(ply, mine);
+  all.sort((a, b) => b._v - a._v);
+
+  /* Resilience — how many moves stay within a tenth of a pawn of the best — is
+     a spread across one position rather than a comparison between two, so the
+     odd-depth pass can measure it: whatever the depth does to these scores, it
+     does to all of them equally. */
+  const lean = all[0]._v;
+  let res = 0, capped = false;
+  for (const m of all){
+    if (res >= RES_FULL){ capped = true; break; }
+    res += Math.max(0, 1 - (lean - m._v) / RES_MARGIN);
   }
+
+  /* and the fourth ply, for the handful that could still be best */
+  const shortlist = all.slice(0, DEEP_WIDE);
+  const settled = await scoreAll(shortlist, DEEP_MAX);
+  if (settled === null) return;
+  if (!settled) return finishDeep(ply, mine);
+  shortlist.sort((a, b) => b._v - a._v);
+
+  const e = evalByPly[ply];
+  if (!e || mine !== evalToken) return;
+  const best = shortlist[0]._v;
+  e.top = shortlist.slice(0, 2).map(m => ({san: m.san, cp: side * m._v, from: m.from, to: m.to}));
+  e.depth = DEEP_MAX;
+  /* Kept beside the two-ply record rather than over it: rateMove needs both
+     plies of a move at one depth before it may use either. */
+  e.deep = {depth: DEEP_MAX, best, white: side * best, res, capped,
+            bestTo: shortlist[0].to, bestCap: !!/[ce]/.test(shortlist[0].flags || "")};
+  saveSession();
+  repaintEval();
   finishDeep(ply, mine);
 }
 /* nothing more is coming for this ply, so nothing should ask again */
@@ -1548,8 +1594,14 @@ function loadSession(){
 function cleanEvals(raw, plies){
   if (!Array.isArray(raw)) return [];
   const num = v => typeof v === "number" && isFinite(v);
-  return raw.slice(0, plies + 1).map(e =>
-    e && num(e.best) && num(e.white) && num(e.res) && num(e.legal) ? e : null);
+  const sound = r => r && num(r.best) && num(r.white) && num(r.res);
+  return raw.slice(0, plies + 1).map(e => {
+    if (!(sound(e) && num(e.legal))) return null;
+    /* the deeper reading is dropped on its own if it is unsound, since the
+       two-ply one under it is still a whole answer */
+    if (e.deep && !(sound(e.deep) && num(e.deep.depth))) delete e.deep;
+    return e;
+  });
 }
 /* Openings get the same treatment for the same reason, though what they feed
    is the ribbon rather than arithmetic: a record has to carry the ply its line
@@ -1615,9 +1667,13 @@ function widenPool(){ setPools(widerThan(pools)); }
 function recordEval(ply, data){
   evalByPly[ply] = data;
   saveSession();          // the move was saved before its eval existed
+  repaintEval();
+}
+/* everything a new reading of a ply changes: the marks in the list, the bar,
+   and a tip that was open on either of them while it was still being made */
+function repaintEval(){
   renderMoves();
   syncEvalBar();
-  /* a tip open on the bar was showing "still evaluating"; fill it in */
   if (tipEval && !tipEl.hidden) showEvalTip(tipPinned);
 }
 /* verbose history is rebuilt move by move inside chess.js, so it is cached
@@ -1630,8 +1686,16 @@ function verboseHistory(){
 }
 
 function rateMove(n){                        // n = 1-based ply
-  const a = evalByPly[n-1], b = evalByPly[n];
-  if (!a || !b) return null;
+  const before = evalByPly[n-1], after = evalByPly[n];
+  if (!before || !after) return null;
+  /* What a move cost is the difference between the position in front of it and
+     the position behind it, so the two have to have been looked at equally
+     hard. Charging a move for the gap between a three-ply reading and a
+     two-ply one would invent losses and gains that are only the depth talking,
+     and both plies have the two-ply reading whatever else they have. */
+  const matched = before.deep && after.deep && before.deep.depth === after.deep.depth;
+  const a = matched ? deepest(before) : before;
+  const b = matched ? deepest(after) : after;
   if (b.over === "checkmate") return {key:"mate", loss:0, res:0, a, b};
   /* With one legal move there was nothing to get wrong. Worth stating
      explicitly: a mate coming into view across the move would otherwise
