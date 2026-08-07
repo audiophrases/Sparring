@@ -2162,18 +2162,16 @@ document.addEventListener("keydown", e => {
     case "ArrowRight": e.preventDefault(); gotoPly(at + 1); break;
     case "Home":       e.preventDefault(); gotoPly(0); break;
     case "End":        e.preventDefault(); gotoPly(n); break;
-    /* the four that change state say so; the review keys don't, because the
-       board and the move list have already answered by the time you look */
+    /* the three invisible switches say so. The keys that rearrange the board
+       itself don't: review moves the pieces, and flipping turns them all the
+       way round. Nothing worth saying over the top of an answer that plain. */
     case "c": case "C": e.preventDefault(); setCoach(!coachMode);
       flash(coachMode ? "Coach on" : "Coach off"); break;
     case "v": case "V": e.preventDefault(); setVariety(!variety);
       flash(variety ? "Variety on" : "Variety off"); break;
     case "b": case "B": e.preventDefault(); setBest(!showBest);
       flash(showBest ? "Best on" : "Best off"); break;
-    /* which side is at the bottom is the thing flipping decides, so that is
-       what it reports — the board turning over is not news, the colour is */
-    case "f": case "F": e.preventDefault(); flip();
-      flash(userColor === "w" ? "You play White" : "You play Black"); break;
+    case "f": case "F": e.preventDefault(); flip(); break;
   }
 });
 $("pgn").onclick = () => {
