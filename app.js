@@ -2130,6 +2130,24 @@ function syncNav(){
   $("next").disabled = reviewPly === null;
 }
 
+/* The toolbar buttons say what they are, but a key pressed with your eyes on
+   the board leaves that news in the wrong place. So the board says it too, for
+   a second, and only for the keys — clicking a button already answers itself,
+   right under the pointer. The text is cleared after the fade rather than left
+   invisible, so a screen reader browsing the page does not find a stale line
+   sitting over the position. */
+let flashTimer = null, flashClear = null;
+function flash(msg){
+  const el = $("flash");
+  clearTimeout(flashTimer); clearTimeout(flashClear);
+  el.textContent = msg;
+  el.classList.add("show");
+  flashTimer = setTimeout(() => {
+    el.classList.remove("show");
+    flashClear = setTimeout(() => { el.textContent = ""; }, 300);
+  }, 1000);
+}
+
 /* keyboard: arrows review the game, C the coach, V variety, B the engine's
    best, F swaps sides. Ignored while a text control has focus, so typing
    never moves the board. */
@@ -2144,10 +2162,18 @@ document.addEventListener("keydown", e => {
     case "ArrowRight": e.preventDefault(); gotoPly(at + 1); break;
     case "Home":       e.preventDefault(); gotoPly(0); break;
     case "End":        e.preventDefault(); gotoPly(n); break;
-    case "c": case "C": e.preventDefault(); setCoach(!coachMode); break;
-    case "v": case "V": e.preventDefault(); setVariety(!variety); break;
-    case "b": case "B": e.preventDefault(); setBest(!showBest); break;
-    case "f": case "F": e.preventDefault(); flip(); break;
+    /* the four that change state say so; the review keys don't, because the
+       board and the move list have already answered by the time you look */
+    case "c": case "C": e.preventDefault(); setCoach(!coachMode);
+      flash(coachMode ? "Coach on" : "Coach off"); break;
+    case "v": case "V": e.preventDefault(); setVariety(!variety);
+      flash(variety ? "Variety on" : "Variety off"); break;
+    case "b": case "B": e.preventDefault(); setBest(!showBest);
+      flash(showBest ? "Best on" : "Best off"); break;
+    /* which side is at the bottom is the thing flipping decides, so that is
+       what it reports — the board turning over is not news, the colour is */
+    case "f": case "F": e.preventDefault(); flip();
+      flash(userColor === "w" ? "You play White" : "You play Black"); break;
   }
 });
 $("pgn").onclick = () => {
